@@ -164,7 +164,8 @@ async def list_files(
 
 def _to_response(r: ContractFile) -> ContractFileResponse:
     return ContractFileResponse(
-        id=r.id, title=r.title, file_type=r.file_type, party_a=r.party_a, party_b=r.party_b,
+        id=r.id, title=r.title, file_type=r.file_type, parse_status=r.parse_status,
+        party_a=r.party_a, party_b=r.party_b,
         amount=r.amount, contract_type_id=r.contract_type_id, review_position=r.review_position,
         is_accepted=r.is_accepted, created_at=str(r.created_at),
     )

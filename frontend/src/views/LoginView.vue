@@ -48,12 +48,6 @@
               <el-form-item>
                 <el-input v-model="reg.password" type="password" placeholder="密码" size="large" show-password />
               </el-form-item>
-              <el-form-item>
-                <el-input v-model="reg.displayName" placeholder="姓名（可选）" size="large" clearable />
-              </el-form-item>
-              <el-form-item>
-                <el-input v-model="reg.department" placeholder="部门（可选）" size="large" clearable />
-              </el-form-item>
               <el-button type="primary" size="large" style="width: 100%" :loading="loading" @click="onRegister">注 册</el-button>
             </el-form>
           </el-tab-pane>
@@ -74,7 +68,7 @@ const auth = useAuthStore()
 const tab = ref('login')
 const identifier = ref('')
 const password = ref('')
-const reg = reactive({ username: '', password: '', displayName: '', department: '' })
+const reg = reactive({ username: '', password: '' })
 const loading = ref(false)
 
 async function onLogin() {
@@ -89,9 +83,11 @@ async function onLogin() {
 }
 
 async function onRegister() {
+  if (!reg.username.trim()) return ElMessage.warning('请输入用户名')
+  if (reg.password.length < 6) return ElMessage.warning('密码至少需要 6 位')
   loading.value = true
   try {
-    await auth.register(reg.username, reg.password, reg.displayName, reg.department)
+    await auth.register(reg.username, reg.password)
     ElMessage.success('注册成功，请登录')
     tab.value = 'login'
     identifier.value = reg.username

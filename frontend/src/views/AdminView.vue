@@ -13,7 +13,7 @@
           <el-table-column prop="description" label="描述" />
           <el-table-column label="状态" width="100">
             <template #default="{ row }">
-              <el-switch :model-value="row.is_active" @change="(v: boolean) => toggleType(row, v)" />
+              <el-switch :model-value="Boolean(row.is_active)" @change="(v: boolean) => toggleType(row, v)" />
             </template>
           </el-table-column>
         </el-table>
@@ -38,10 +38,10 @@
     <el-tab-pane label="Prompt 管理">
       <el-card shadow="hover">
         <el-table :data="prompts">
-          <el-table-column prop="name" label="名称" width="200" />
-          <el-table-column prop="prompt_type" label="类型" width="130" />
-          <el-table-column prop="scope" label="作用域" width="110" />
-          <el-table-column prop="content" label="内容" show-overflow-tooltip />
+          <el-table-column prop="prompt_name" label="名称" width="200" />
+          <el-table-column prop="level" label="层级" width="130" />
+          <el-table-column prop="contract_type_id" label="合同类型 ID" width="120" />
+          <el-table-column prop="prompt_content" label="内容" show-overflow-tooltip />
         </el-table>
       </el-card>
     </el-tab-pane>
@@ -52,7 +52,7 @@
       <el-form-item label="模型名称"><el-input v-model="modelForm.model_name" /></el-form-item>
       <el-form-item label="用途">
         <el-select v-model="modelForm.model_type" style="width: 100%">
-          <el-option v-for="t in ['review', 'chat', 'embedding', 'rerank']" :key="t" :label="t" :value="t" />
+          <el-option v-for="t in ['review', 'chat', 'intent', 'embedding', 'rerank']" :key="t" :label="t" :value="t" />
         </el-select>
       </el-form-item>
       <el-form-item label="温度"><el-input-number v-model="modelForm.temperature" :min="0" :max="2" :step="0.1" /></el-form-item>
@@ -82,9 +82,14 @@ const modelForm = reactive({ model_name: '', model_type: 'chat', temperature: 0.
 onMounted(load)
 
 async function load() {
-  types.value = await adminApi.contractTypes()
-  models.value = await adminApi.modelConfigs()
-  prompts.value = await adminApi.prompts()
+  const [contractTypes, modelConfigs, promptTemplates] = await Promise.all([
+    adminApi.contractTypes(),
+    adminApi.modelConfigs(),
+    adminApi.prompts(),
+  ])
+  types.value = contractTypes
+  models.value = modelConfigs
+  prompts.value = promptTemplates
 }
 
 async function addType() {

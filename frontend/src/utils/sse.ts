@@ -8,11 +8,13 @@ export interface SseOptions {
   url: string
   kind: SseKind
   token: string
+  body?: unknown
   onEvent: (payload: unknown) => void
   signal?: AbortSignal
 }
 
-export function openSse({ url, kind, token, onEvent, signal }: SseOptions): () => void {
+export function openSse({ url, kind, token, body, onEvent, signal }: SseOptions): () => void {
+  void kind
   const controller = new AbortController()
   const external = signal
   const abort = () => controller.abort()
@@ -29,10 +31,18 @@ export function openSse({ url, kind, token, onEvent, signal }: SseOptions): () =
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
+        body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
       })
       if (!resp.ok || !resp.body) {
-        onEvent({ type: 'error', message: `SSE 连接失败: ${resp.status}` })
+        let message = `SSE 连接失败: ${resp.status}`
+        try {
+          const errorBody = (await resp.json()) as { msg?: string; detail?: string }
+          message = errorBody.msg || errorBody.detail || message
+        } catch {
+          // 非 JSON 错误响应保留 HTTP 状态信息
+        }
+        onEvent({ type: 'error', event: 'error', message, data: { message } })
         return
       }
       const reader = resp.body.getReader()
@@ -42,13 +52,16 @@ export function openSse({ url, kind, token, onEvent, signal }: SseOptions): () =
         const { done, value } = await reader.read()
         if (done) break
         buffer += decoder.decode(value, { stream: true })
+        buffer = buffer.replace(/\r\n/g, '\n')
         let idx: number
         while ((idx = buffer.indexOf('\n\n')) >= 0) {
           const chunk = buffer.slice(0, idx)
           buffer = buffer.slice(idx + 2)
-          const line = chunk.split('\n').find((l) => l.startsWith('data:'))
-          if (!line) continue
-          const raw = line.slice(5).trim()
+          const raw = chunk
+            .split('\n')
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.slice(5).trimStart())
+            .join('\n')
           if (!raw) continue
           try {
             onEvent(JSON.parse(raw))
@@ -57,9 +70,24 @@ export function openSse({ url, kind, token, onEvent, signal }: SseOptions): () =
           }
         }
       }
+      buffer += decoder.decode()
+      const raw = buffer
+        .replace(/\r\n/g, '\n')
+        .split('\n')
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trimStart())
+        .join('\n')
+      if (raw) {
+        try {
+          onEvent(JSON.parse(raw))
+        } catch {
+          // 忽略不完整的末尾数据帧
+        }
+      }
     } catch (err) {
       if ((err as Error).name !== 'AbortError') {
-        onEvent({ type: 'error', message: 'SSE 连接中断' })
+        const message = 'SSE 连接中断'
+        onEvent({ type: 'error', event: 'error', message, data: { message } })
       }
     }
   })()

@@ -14,17 +14,29 @@ const router = createRouter({
         { path: 'review', name: 'review', component: () => import('@/views/ReviewView.vue') },
         { path: 'compare', name: 'compare', component: () => import('@/views/CompareView.vue') },
         { path: 'chat', name: 'chat', component: () => import('@/views/ChatView.vue') },
-        { path: 'admin', name: 'admin', component: () => import('@/views/AdminView.vue') },
+        { path: 'admin', name: 'admin', component: () => import('@/views/AdminView.vue'), meta: { admin: true } },
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: '/dashboard' },
   ],
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const token = localStorage.getItem('contract_review_token')
   if (!to.meta.public && !token) return { name: 'login' }
   if (to.name === 'login' && token) return { name: 'dashboard' }
+  if (to.meta.admin && token) {
+    const { useAuthStore } = await import('@/stores/auth')
+    const auth = useAuthStore()
+    if (!auth.user) {
+      try {
+        await auth.fetchMe()
+      } catch {
+        return { name: 'login' }
+      }
+    }
+    if (auth.user?.role !== 'admin') return { name: 'dashboard' }
+  }
   return true
 })
 

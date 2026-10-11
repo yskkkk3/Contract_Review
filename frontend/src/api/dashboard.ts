@@ -1,5 +1,5 @@
 import { del, get, post } from './http'
-import type { ContractType, DashboardOverview, ModelConfig, PromptTemplate, RiskDimStat, TrendPoint } from '@/types/api'
+import type { ContractType, DashboardOverview, DepartmentUsage, ModelConfig, PromptTemplate, TrendPoint } from '@/types/api'
 
 export const dashboardApi = {
   overview() {
@@ -8,8 +8,8 @@ export const dashboardApi = {
   trends(period = 'month') {
     return get<TrendPoint[]>(`/dashboard/trends?period=${period}`)
   },
-  riskDims() {
-    return get<RiskDimStat[]>('/dashboard/risk-dims')
+  departments() {
+    return get<DepartmentUsage[]>('/dashboard/departments')
   },
 }
 

@@ -19,7 +19,7 @@
         </div>
         <div class="input-row">
           <el-select v-model="bindFileId" placeholder="绑定合同（可选）" clearable style="width: 220px; margin-right: 12px">
-            <el-option v-for="f in files" :key="f.file_id" :label="f.title" :value="f.file_id" />
+            <el-option v-for="f in files" :key="f.id" :label="f.title" :value="f.id" />
           </el-select>
           <el-input
             v-model="input"
@@ -36,13 +36,13 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, ref } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '@/api/contract'
 import { sessionApi } from '@/api/session'
 import { TOKEN_KEY } from '@/api/http'
 import { openSse } from '@/utils/sse'
-import type { ContractFile, SessionInfo } from '@/types/api'
+import type { ContractFile, MessageInfo, SessionInfo } from '@/types/api'
 
 interface Msg {
   role: 'user' | 'assistant'
@@ -60,28 +60,38 @@ const msgRef = ref<HTMLElement>()
 const abortRef = ref<(() => void) | null>(null)
 
 onMounted(async () => {
-  const data = await sessionApi.list('chat')
-  sessions.value = data.items
-  const fdata = await api.list(1, 100)
-  files.value = fdata.items
+  const [sessionData, contractData] = await Promise.all([sessionApi.list('chat'), api.list()])
+  sessions.value = sessionData.items
+  files.value = contractData.filter((file) => file.parse_status === 'parsed')
 })
 
-async function newSession() {
-  const s = await sessionApi.create(`问答-${Date.now()}`, 'chat', bindFileId.value)
-  sessions.value.unshift(s)
-  await switchSession(s)
+onUnmounted(() => abortRef.value?.())
+
+function newSession() {
+  abortRef.value?.()
+  currentId.value = undefined
+  bindFileId.value = undefined
+  messages.value = []
+  input.value = ''
+  sending.value = false
 }
 
 async function switchSession(s: SessionInfo) {
+  abortRef.value?.()
+  sending.value = false
   currentId.value = s.session_id
-  messages.value = []
+  bindFileId.value = s.file_id ?? undefined
+  const history = await sessionApi.history(s.session_id)
+  messages.value = history.map(toMessage)
+  scrollBottom()
 }
 
 function fileTitle(fileId: number) {
-  return files.value.find((f) => f.file_id === fileId)?.title || ''
+  return files.value.find((f) => f.id === fileId)?.title || ''
 }
 
 async function send() {
+  if (sending.value) return
   const content = input.value.trim()
   if (!content) return
   if (!currentId.value) {
@@ -97,6 +107,7 @@ async function send() {
     url: `${import.meta.env.VITE_API_BASE || '/api'}/chats`,
     kind: 'chat',
     token: localStorage.getItem(TOKEN_KEY) || '',
+    body: { session_id: currentId.value, content },
     onEvent: (payload) => {
       const ev = payload as { type: string; content?: string; message?: string }
       if (ev.type === 'content' && ev.content) {
@@ -120,6 +131,10 @@ function scrollBottom() {
   void nextTick(() => {
     if (msgRef.value) msgRef.value.scrollTop = msgRef.value.scrollHeight
   })
+}
+
+function toMessage(message: MessageInfo): Msg {
+  return { role: message.role, content: message.content }
 }
 </script>
 

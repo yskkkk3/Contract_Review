@@ -128,12 +128,19 @@ async def stream_review_events(
             stream = graph.astream(state, stream_mode=["custom", "updates"])
             final_points: list[dict] = []
             summary: dict = {}
+            streamed_index = 0
             async for mode, payload in stream:
                 if mode == "custom":
                     if isinstance(payload, dict) and payload.get("type") == "risk_point":
                         for p in payload.get("points", []):
                             if isinstance(p, dict):
-                                yield f"data: {json.dumps({'event': 'message', 'data': p}, ensure_ascii=False)}\n\n"
+                                streamed_index += 1
+                                streamed_point = {
+                                    **p,
+                                    "index": p.get("index") or streamed_index,
+                                    "risk_dim": p.get("risk_dim") or payload.get("risk_dim", ""),
+                                }
+                                yield f"data: {json.dumps({'event': 'message', 'data': streamed_point}, ensure_ascii=False)}\n\n"
                                 await asyncio.sleep(0.01)
                 elif mode == "updates":
                     for node, upd in payload.items():

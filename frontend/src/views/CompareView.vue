@@ -11,16 +11,23 @@
         <el-row :gutter="16">
           <el-col :span="12">
             <el-select v-model="fileA" placeholder="选择基准合同" style="width: 100%" filterable>
-              <el-option v-for="f in files" :key="f.file_id" :label="f.title" :value="f.file_id" />
+              <el-option v-for="f in files" :key="f.id" :label="f.title" :value="f.id" />
             </el-select>
           </el-col>
           <el-col :span="12">
             <el-select v-model="fileB" placeholder="选择对比合同" style="width: 100%" filterable>
-              <el-option v-for="f in files" :key="f.file_id" :label="f.title" :value="f.file_id" />
+              <el-option v-for="f in files" :key="f.id" :label="f.title" :value="f.id" />
             </el-select>
           </el-col>
         </el-row>
         <el-divider />
+        <el-alert
+          v-if="summary"
+          :title="`共发现 ${summary.difference_count} 处段落差异`"
+          type="info"
+          :closable="false"
+          style="margin-bottom: 16px"
+        />
         <el-table v-if="diffs.length" :data="diffs" border>
           <el-table-column prop="field" label="比对项" width="160" />
           <el-table-column label="基准合同">
@@ -35,8 +42,8 @@
           </el-table-column>
           <el-table-column label="差异类型" width="120">
             <template #default="{ row }">
-              <el-tag :type="row.level === '高' ? 'danger' : row.level === '中' ? 'warning' : 'info'">
-                {{ row.level }}
+              <el-tag :type="operationTag(row.operation)">
+                {{ operationText(row.operation) }}
               </el-tag>
             </template>
           </el-table-column>
@@ -51,15 +58,13 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '@/api/contract'
-import { TOKEN_KEY } from '@/api/http'
-import { openSse } from '@/utils/sse'
-import type { ContractFile } from '@/types/api'
+import type { ComparisonResult, ContractFile } from '@/types/api'
 
 interface Diff {
   field: string
   base: string
   target: string
-  level: string
+  operation: string
 }
 
 const files = ref<ContractFile[]>([])
@@ -67,41 +72,41 @@ const fileA = ref<number>()
 const fileB = ref<number>()
 const diffs = ref<Diff[]>([])
 const running = ref(false)
+const summary = ref<ComparisonResult['diff_summary'] | null>(null)
 
 onMounted(async () => {
-  const data = await api.list(1, 100)
-  files.value = data.items.filter((f) => f.parse_status === 'parsed')
+  const data = await api.list()
+  files.value = data.filter((file) => file.file_type === 'docx')
 })
 
 async function compare() {
   if (!fileA.value || !fileB.value) return ElMessage.warning('请选择两份合同')
   if (fileA.value === fileB.value) return ElMessage.warning('请选择不同的合同')
-  const session = await api.createSession(`比对-${Date.now()}`, 'compare', fileA.value, fileB.value)
   diffs.value = []
+  summary.value = null
   running.value = true
-  const url = `${import.meta.env.VITE_API_BASE || '/api'}/comparisons/compare`
-  openSse({
-    url,
-    kind: 'review',
-    token: localStorage.getItem(TOKEN_KEY) || '',
-    onEvent: (payload) => {
-      const ev = payload as { event: string; data: unknown } & { type?: string }
-      if (ev.event === 'message' || ev.type === 'content') {
-        const data = ev.data as { diff_type: string; base: string; target: string; level: string }
-        diffs.value.push({
-          field: data.diff_type || '条款差异',
-          base: data.base || '',
-          target: data.target || '',
-          level: data.level || '中',
-        })
-      } else if (ev.event === 'end' || ev.type === 'done') {
-        running.value = false
-      } else if (ev.event === 'error' || ev.type === 'error') {
-        ElMessage.error((ev.data as { message?: string })?.message || '比对失败')
-        running.value = false
-      }
-    },
-  })
+  try {
+    const result = await api.compare(fileA.value, fileB.value, `比对-${Date.now()}`)
+    summary.value = result.diff_summary
+    diffs.value = result.diffs
+      .filter((item) => item.operation !== 'equal')
+      .map((item, index) => ({
+        field: `第 ${index + 1} 处`,
+        base: item.standard_text,
+        target: item.comparison_text,
+        operation: item.operation,
+      }))
+  } finally {
+    running.value = false
+  }
+}
+
+function operationText(operation: string) {
+  return { replace: '修改', insert: '新增', delete: '删除' }[operation] || operation
+}
+
+function operationTag(operation: string) {
+  return { replace: 'warning', insert: 'success', delete: 'danger' }[operation] || 'info'
 }
 </script>
 

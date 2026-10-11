@@ -22,41 +22,48 @@ export interface LoginResult {
 export interface UserInfo {
   id: number
   username: string
-  display_name: string
-  department: string
   role: string
-  created_at: string
+  is_active?: boolean
+  created_at?: string | null
 }
 
 export interface ContractFile {
-  file_id: number
+  id: number
   title: string
   file_type: string
   parse_status: string
   party_a: string
   party_b: string
   amount: number
-  contract_type: string
-  is_accepted: boolean
-  created_at: string
+  contract_type_id: number | null
+  review_position: number
+  is_accepted: number
+  created_at: string | null
 }
 
 export interface SessionInfo {
   session_id: number
   title: string
   session_type: 'review' | 'compare' | 'chat'
-  status: string
   file_id: number | null
-  file_id_2: number | null
+  created_at: string | null
+}
+
+export interface MessageInfo {
+  id: number
+  session_id: number
+  role: 'user' | 'assistant'
+  content: string
+  parent_id: number | null
+  message_index: number
   created_at: string
-  updated_at: string
 }
 
 /** 审阅 SSE 事件 */
 export interface RiskPoint {
-  id: number
-  task_id: number
-  session_id: number
+  id?: number
+  task_id?: number
+  session_id?: number
   index: number
   original_content: string
   risk_analysis: string
@@ -69,9 +76,14 @@ export interface ReviewSummary {
   summary: string
   suggestion: string
   overall_risk: '高' | '中' | '低'
+  metrics?: {
+    total_ms: number
+    risk_point_count: number
+  }
 }
 
 export type ReviewEvent =
+  | { event: 'meta'; data: { task_id: number; session_id: number; chunk_count: number } }
   | { event: 'message'; data: RiskPoint }
   | { event: 'end'; data: ReviewSummary }
   | { event: 'error'; data: { message: string } }
@@ -79,46 +91,76 @@ export type ReviewEvent =
 /** 聊天 SSE 事件 */
 export type ChatEvent =
   | { type: 'content'; content: string; session_id: number }
-  | { type: 'done'; message_id: number; full_content: string }
+  | {
+      type: 'done'
+      message_id: number
+      full_content: string
+      metrics: {
+        ttft_ms: number
+        total_ms: number
+        completion_tokens: number | null
+        tokens_per_sec: number
+      }
+    }
   | { type: 'error'; message: string }
 
+export interface CharDiff {
+  operation: 'equal' | 'replace' | 'insert' | 'delete'
+  std_text: string
+  cmp_text: string
+}
+
+export interface ParagraphDiff {
+  operation: string
+  std_index: number | null
+  cmp_index: number | null
+  standard_text: string
+  comparison_text: string
+  char_diff: CharDiff[]
+}
+
 export interface ComparisonResult {
-  id: number
+  task_id: number
   session_id: number
-  result_json: string
-  created_at: string
+  diff_summary: {
+    standard_paragraphs: number
+    comparison_paragraphs: number
+    difference_count: number
+  }
+  diffs: ParagraphDiff[]
+  standard_file: { file_id: number; title: string; file_type: string; download_url: string }
+  comparison_file: { file_id: number; title: string; file_type: string; download_url: string }
 }
 
 export interface DashboardOverview {
   reviewed_contracts: number
-  total_contracts: number
-  risk_points: number
-  avg_risk_level: string
-  user_count: number
-  today_reviews: number
-  today_chats: number
+  service_departments: number
+  users_count: number
+  served_faculty_students: number
+  total_reviewed_amount: number
 }
 
 export interface TrendPoint {
   date: string
-  review_count: number
-  chat_count: number
+  total: number
+  service: number
+  goods: number
+  infrastructure: number
 }
 
-export interface RiskDimStat {
-  risk_dim: string
-  count: number
-  high: number
-  medium: number
-  low: number
+export interface DepartmentUsage {
+  department_name: string
+  contract_review: number
+  contract_verification: number
+  contract_comparison: number
+  total: number
 }
 
 export interface ContractType {
   id: number
   name: string
   description: string
-  is_active: boolean
-  created_at: string
+  is_active: number
 }
 
 export interface ModelConfig {
@@ -130,14 +172,19 @@ export interface ModelConfig {
   temperature: number
   top_p: number
   max_tokens: number
-  is_active: boolean
+  is_default: number
+  status: string
+  create_time: string | null
+  update_time: string | null
 }
 
 export interface PromptTemplate {
   id: number
-  name: string
-  prompt_type: string
-  content: string
-  scope: string
-  is_active: boolean
+  level: string
+  contract_type_id: number | null
+  base_prompt_id: number | null
+  organization_id: number | null
+  prompt_name: string
+  prompt_content: string
+  is_active: number
 }

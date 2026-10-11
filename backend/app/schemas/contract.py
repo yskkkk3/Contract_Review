@@ -22,6 +22,7 @@ class ContractFileResponse(BaseModel):
     id: int
     title: str
     file_type: str
+    parse_status: str = "pending"
     party_a: str = ""
     party_b: str = ""
     amount: float = 0.0

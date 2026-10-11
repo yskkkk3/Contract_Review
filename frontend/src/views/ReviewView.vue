@@ -4,7 +4,7 @@
       <el-card shadow="hover">
         <template #header>选择合同并发起审阅</template>
         <el-select v-model="fileId" placeholder="选择已解析合同" style="width: 100%" @change="onFileChange">
-          <el-option v-for="f in files" :key="f.file_id" :label="`${f.title} (${f.contract_type || '未分类'})`" :value="f.file_id" />
+          <el-option v-for="f in files" :key="f.id" :label="contractLabel(f)" :value="f.id" />
         </el-select>
         <el-divider />
         <el-form label-width="90px">
@@ -56,8 +56,13 @@
               <div class="suggest"><b>修改建议：</b>{{ p.suggested_content }}</div>
               <div class="actions">
                 <el-tag :type="levelType(p.risk_level)" size="small">{{ p.risk_level }}</el-tag>
-                <el-button size="small" :type="acceptedMap[p.id] ? 'success' : 'default'" @click="accept(p)">
-                  {{ acceptedMap[p.id] ? '已采纳' : '采纳' }}
+                <el-button
+                  size="small"
+                  :disabled="running || !p.id"
+                  :type="p.id && acceptedMap[p.id] ? 'success' : 'default'"
+                  @click="accept(p)"
+                >
+                  {{ p.id && acceptedMap[p.id] ? '已采纳' : '采纳' }}
                 </el-button>
               </div>
             </div>
@@ -71,7 +76,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '@/api/contract'
 import { adminApi } from '@/api/dashboard'
@@ -93,17 +98,21 @@ const acceptedMap = ref<Record<number, boolean>>({})
 const abortRef = ref<(() => void) | null>(null)
 
 onMounted(async () => {
-  const data = await api.list(1, 100)
-  files.value = data.items.filter((f) => f.parse_status === 'parsed')
-  types.value = await adminApi.contractTypes()
+  const [contracts, contractTypes] = await Promise.all([api.list(), adminApi.contractTypes()])
+  files.value = contracts.filter((f) => f.parse_status === 'parsed')
+  types.value = contractTypes.filter((type) => Boolean(type.is_active))
 })
 
-async function onFileChange() {
-  contractType.value = ''
+onUnmounted(() => abortRef.value?.())
+
+function onFileChange() {
+  const file = files.value.find((item) => item.id === fileId.value)
+  contractType.value = types.value.find((type) => type.id === file?.contract_type_id)?.name || ''
 }
 
 async function startReview() {
   if (!fileId.value) return ElMessage.warning('请先选择合同')
+  abortRef.value?.()
   const session = await api.createSession(`审阅-${Date.now()}`, 'review', fileId.value)
   riskPoints.value = []
   summary.value = null
@@ -116,11 +125,19 @@ async function startReview() {
     url,
     kind: 'review',
     token,
+    body: {
+      session_id: session.session_id,
+      stance: stance.value,
+      intensity: intensity.value,
+      description: description.value || null,
+      contract_type: contractType.value,
+    },
     onEvent: (payload) => {
       const ev = payload as { event: string; data: unknown } & { type?: string }
       if (ev.event === 'message') {
-        riskPoints.value.push(ev.data as RiskPoint)
+        upsertRiskPoint(ev.data as RiskPoint)
       } else if (ev.event === 'end') {
+        riskPoints.value = riskPoints.value.filter((point) => Boolean(point.id))
         summary.value = ev.data as ReviewSummary
         running.value = false
       } else if (ev.event === 'error') {
@@ -131,8 +148,35 @@ async function startReview() {
   })
 }
 
-function accept(p: RiskPoint) {
-  acceptedMap.value[p.id] = !acceptedMap.value[p.id]
+async function accept(p: RiskPoint) {
+  if (!p.id || !p.task_id || !p.session_id) return
+  const accepted = !acceptedMap.value[p.id]
+  await api.acceptRiskPoint(p.task_id, p.session_id, p.index, accepted)
+  acceptedMap.value[p.id] = accepted
+}
+
+function upsertRiskPoint(point: RiskPoint) {
+  if (point.id) {
+    const persistedIndex = riskPoints.value.findIndex((item) => item.id === point.id)
+    if (persistedIndex >= 0) {
+      riskPoints.value[persistedIndex] = point
+      return
+    }
+  }
+  const streamedIndex = riskPoints.value.findIndex(
+    (item) =>
+      !item.id &&
+      item.original_content === point.original_content &&
+      item.risk_dim === point.risk_dim &&
+      item.risk_analysis === point.risk_analysis,
+  )
+  if (streamedIndex >= 0 && point.id) riskPoints.value[streamedIndex] = point
+  else if (streamedIndex < 0) riskPoints.value.push(point)
+}
+
+function contractLabel(file: ContractFile) {
+  const typeName = types.value.find((type) => type.id === file.contract_type_id)?.name || '未分类'
+  return `${file.title} (${typeName})`
 }
 
 function levelType(level: string) {

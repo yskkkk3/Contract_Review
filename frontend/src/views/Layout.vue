@@ -39,7 +39,7 @@
         <el-menu-item index="/chat">
           <el-icon><ChatDotRound /></el-icon><span>智能问答</span>
         </el-menu-item>
-        <el-menu-item index="/admin">
+        <el-menu-item v-if="auth.user?.role === 'admin'" index="/admin">
           <el-icon><Setting /></el-icon><span>系统配置</span>
         </el-menu-item>
       </el-menu>
@@ -54,7 +54,7 @@
         <el-dropdown @command="onCommand">
           <span class="user">
             <el-avatar :size="30" class="avatar">{{ avatarText }}</el-avatar>
-            <span class="user-name">{{ auth.user?.display_name || auth.user?.username }}</span>
+            <span class="user-name">{{ auth.user?.username }}</span>
             <el-icon class="caret"><ArrowDown /></el-icon>
           </span>
           <template #dropdown>
@@ -92,7 +92,7 @@ const TITLES: Record<string, string> = {
 
 const title = computed(() => TITLES[route.name as string] || '合同智能审阅')
 const avatarText = computed(() => {
-  const name = auth.user?.display_name || auth.user?.username || 'U'
+  const name = auth.user?.username || 'U'
   return name.slice(0, 1).toUpperCase()
 })
 

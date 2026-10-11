@@ -112,6 +112,10 @@ def test_review_sse_flow(client, auth_headers, monkeypatch, tmp_path):
     assert resp.status_code == 200, resp.text
     file_id = resp.json()["data"]["file_id"]
 
+    listed = client.get("/api/contracts", headers=auth_headers)
+    assert listed.status_code == 200
+    assert listed.json()["data"][0]["parse_status"] == "parsed"
+
     r = client.post(
         "/api/sessions",
         json={"title": "review test", "session_type": "review", "file_id": file_id},
@@ -139,6 +143,7 @@ def test_review_sse_flow(client, auth_headers, monkeypatch, tmp_path):
     assert "event" in body
     assert "message" in body
     assert "end" in body
+    assert '"risk_dim": "财务与付款"' in body
 
     # 验证 DB 落库
     r = client.get("/api/sessions?session_type=review", headers=auth_headers)
