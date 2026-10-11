@@ -1,67 +1,19 @@
-<template>
-  <div class="login-page">
-    <div class="login-shell">
-      <div class="brand-panel">
-        <div class="brand-head">
-          <svg class="brand-logo" viewBox="0 0 48 48" width="44" height="44" aria-hidden="true">
-            <defs>
-              <linearGradient id="lg2" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0" stop-color="#60a5fa" />
-                <stop offset="1" stop-color="#2563eb" />
-              </linearGradient>
-            </defs>
-            <path d="M24 4l14 5.2v11.6c0 9.1-5.9 16.6-14 20.2-8.1-3.6-14-11.1-14-20.2V9.2L24 4z" fill="url(#lg2)" />
-            <path d="M16 24.5l5.5 5.5L32.5 18.5" stroke="#fff" stroke-width="3.4" fill="none" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          <div>
-            <div class="brand-title">高校合同智能审阅系统</div>
-            <div class="brand-sub">Contract Review Agent</div>
-          </div>
-        </div>
-        <ul class="feature-list">
-          <li><span class="dot" />多智能体编排 · LangGraph 意图识别 / 专家并行 / 仲裁</li>
-          <li><span class="dot" />混合检索 RAG · 法规 / 校内制度 / 合同模板三层知识库</li>
-          <li><span class="dot" />流式审阅 · SSE 实时输出风险点与修改建议</li>
-        </ul>
-        <div class="brand-footer">深圳大学 · 采购合同管理场景</div>
-      </div>
-      <el-card class="login-card" shadow="never">
-        <h2>欢迎回来</h2>
-        <p class="login-tip">登录以使用合同智能审阅能力</p>
-        <el-tabs v-model="tab">
-          <el-tab-pane label="登录" name="login">
-            <el-form @keyup.enter="onLogin">
-              <el-form-item>
-                <el-input v-model="identifier" placeholder="用户名 / 邮箱" size="large" clearable />
-              </el-form-item>
-              <el-form-item>
-                <el-input v-model="password" type="password" placeholder="密码" size="large" show-password />
-              </el-form-item>
-              <el-button type="primary" size="large" style="width: 100%" :loading="loading" @click="onLogin">登 录</el-button>
-            </el-form>
-          </el-tab-pane>
-          <el-tab-pane label="注册" name="register">
-            <el-form @keyup.enter="onRegister">
-              <el-form-item>
-                <el-input v-model="reg.username" placeholder="用户名" size="large" clearable />
-              </el-form-item>
-              <el-form-item>
-                <el-input v-model="reg.password" type="password" placeholder="密码" size="large" show-password />
-              </el-form-item>
-              <el-button type="primary" size="large" style="width: 100%" :loading="loading" @click="onRegister">注 册</el-button>
-            </el-form>
-          </el-tab-pane>
-        </el-tabs>
-      </el-card>
-    </div>
-  </div>
-</template>
-
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { Connection, DocumentChecked, Search } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
+import { useReveal } from '@/composables/useReveal'
+import BrandLogo from '@/components/layout/BrandLogo.vue'
+import AuthProductVisual from '@/components/auth/AuthProductVisual.vue'
+import AuthPasswordInput from '@/components/auth/AuthPasswordInput.vue'
+import AuthUsernameInput from '@/components/auth/AuthUsernameInput.vue'
+import AppButton from '@/components/ui/AppButton.vue'
+import AppCard from '@/components/ui/AppCard.vue'
+import AppContainer from '@/components/ui/AppContainer.vue'
+import AppSection from '@/components/ui/AppSection.vue'
+import AppTypography from '@/components/ui/AppTypography.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -70,6 +22,20 @@ const identifier = ref('')
 const password = ref('')
 const reg = reactive({ username: '', password: '' })
 const loading = ref(false)
+const root = useReveal()
+const scrolled = ref(false)
+const features = [
+  { icon: Connection, title: '多智能体编排', description: 'LangGraph 意图识别 / 专家并行 / 仲裁' },
+  { icon: Search, title: '混合检索 RAG', description: '法规 / 校内制度 / 合同模板三层知识库' },
+  { icon: DocumentChecked, title: '流式审阅', description: 'SSE 实时输出风险点与修改建议' },
+]
+
+function updateScroll() { scrolled.value = window.scrollY > 0 }
+onMounted(() => {
+  updateScroll()
+  window.addEventListener('scroll', updateScroll, { passive: true })
+})
+onUnmounted(() => { window.removeEventListener('scroll', updateScroll) })
 
 async function onLogin() {
   loading.value = true
@@ -97,120 +63,147 @@ async function onRegister() {
 }
 </script>
 
+<template>
+  <div ref="root" class="design-system auth-page">
+    <a class="auth-skip-link" href="#auth-form">跳转到登录 / 注册</a>
+    <header class="auth-header" :class="{ 'is-scrolled': scrolled }">
+      <AppContainer class="auth-header-inner">
+        <a class="auth-brand" href="#auth-main" aria-label="高校合同智能审阅系统">
+          <BrandLogo />
+          <span>
+            <span class="auth-brand-title">高校合同智能审阅系统</span>
+            <span class="auth-brand-sub">Contract Review Agent</span>
+          </span>
+        </a>
+        <AppTypography as="span" variant="small" tone="secondary" class="auth-context">采购合同管理场景</AppTypography>
+      </AppContainer>
+    </header>
+
+    <main id="auth-main">
+      <AppContainer class="auth-main">
+        <div class="auth-grid">
+          <div class="auth-intro">
+            <AppTypography variant="eyebrow" tone="secondary" class="auth-eyebrow">Contract Review Agent</AppTypography>
+            <AppTypography as="h1" variant="hero">高校合同<br />智能审阅系统</AppTypography>
+            <AppTypography variant="lead" tone="secondary" class="auth-subtitle">流式审阅 · SSE 实时输出风险点与修改建议</AppTypography>
+            <AuthProductVisual class="auth-product-visual" />
+          </div>
+
+          <AppCard id="auth-form" as="div" padding="none" class="auth-card" tabindex="-1" aria-labelledby="auth-heading">
+            <div class="auth-card-heading">
+              <AppTypography id="auth-heading" as="h2" variant="section">{{ tab === 'login' ? '欢迎回来' : '注册' }}</AppTypography>
+              <AppTypography variant="small" tone="secondary">登录以使用合同智能审阅能力</AppTypography>
+            </div>
+            <el-tabs v-model="tab" stretch class="auth-tabs" aria-label="登录或注册">
+              <el-tab-pane label="登录" name="login">
+                <el-form label-position="top" aria-label="登录" @submit.prevent="onLogin">
+                  <el-form-item label="用户名 / 邮箱" for="login-identifier">
+                    <AuthUsernameInput id="login-identifier" v-model="identifier" placeholder="用户名 / 邮箱" />
+                  </el-form-item>
+                  <el-form-item label="密码" for="login-password">
+                    <AuthPasswordInput id="login-password" v-model="password" autocomplete="current-password" />
+                  </el-form-item>
+                  <AppButton size="large" native-type="submit" class="auth-submit" :loading="loading">登 录</AppButton>
+                </el-form>
+              </el-tab-pane>
+              <el-tab-pane label="注册" name="register">
+                <el-form label-position="top" aria-label="注册" @submit.prevent="onRegister">
+                  <el-form-item label="用户名" for="register-username">
+                    <AuthUsernameInput id="register-username" v-model="reg.username" placeholder="用户名" />
+                  </el-form-item>
+                  <el-form-item label="密码" for="register-password">
+                    <AuthPasswordInput id="register-password" v-model="reg.password" autocomplete="new-password" />
+                  </el-form-item>
+                  <AppButton size="large" native-type="submit" class="auth-submit" :loading="loading">注 册</AppButton>
+                </el-form>
+              </el-tab-pane>
+            </el-tabs>
+          </AppCard>
+        </div>
+      </AppContainer>
+
+      <AppSection tone="muted" aria-label="产品能力">
+        <AppContainer class="auth-features-grid">
+          <AppCard v-for="feature in features" :key="feature.title" data-reveal padding="large" class="auth-feature">
+            <component :is="feature.icon" class="auth-feature-icon" aria-hidden="true" />
+            <AppTypography as="h2" variant="card">{{ feature.title }}</AppTypography>
+            <AppTypography tone="secondary">{{ feature.description }}</AppTypography>
+          </AppCard>
+        </AppContainer>
+      </AppSection>
+    </main>
+
+    <AppContainer as="footer" class="auth-footer">
+      <AppTypography variant="caption" tone="muted">高校合同智能审阅系统</AppTypography>
+      <AppTypography variant="caption" tone="muted">Contract Review Agent</AppTypography>
+    </AppContainer>
+  </div>
+</template>
+
 <style scoped>
-.login-page {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background:
-    radial-gradient(1200px 600px at 15% 10%, rgba(37, 99, 235, 0.18), transparent 60%),
-    radial-gradient(1000px 500px at 85% 90%, rgba(124, 58, 237, 0.14), transparent 55%),
-    linear-gradient(135deg, #0f172a, #1e3a8a);
-  padding: 24px;
+.auth-page { min-height: 100dvh; padding-top: var(--nav-height); color: var(--color-text); background: var(--color-canvas); font: var(--weight-regular) var(--font-body)/var(--leading-body) var(--font-sans); font-feature-settings: 'tnum' 1, 'lnum' 1; -webkit-font-smoothing: antialiased; }
+.auth-page, .auth-page :deep(*), .auth-page :deep(*::before), .auth-page :deep(*::after) { box-sizing: border-box; }
+.auth-page :deep(:focus-visible) { outline: 2px solid var(--color-accent); outline-offset: var(--space-1); }
+.auth-skip-link { position: fixed; z-index: var(--layer-skip-link); top: var(--space-3); left: var(--space-3); padding: var(--space-3) var(--space-4); border-radius: var(--radius-button); color: var(--color-text); background: var(--color-canvas); transform: translateY(-200%); }
+.auth-skip-link:focus { transform: none; }
+.auth-header { position: fixed; z-index: var(--layer-navbar); inset: 0 0 auto; height: var(--nav-height); border-bottom: var(--border-width) solid transparent; background: var(--color-canvas); transition: background var(--duration-normal) var(--ease-out), border-color var(--duration-normal) var(--ease-out); }
+.auth-header.is-scrolled { border-color: var(--color-border); background: var(--color-glass); backdrop-filter: blur(var(--blur-glass)); }
+.auth-header-inner { display: flex; align-items: center; justify-content: space-between; gap: var(--space-6); height: 100%; }
+.auth-brand { display: inline-flex; align-items: center; gap: var(--space-3); color: var(--color-text); text-decoration: none; }
+.auth-brand :deep(svg) { width: var(--space-8); height: var(--space-8); color: var(--color-accent); }
+.auth-brand-title, .auth-brand-sub { display: block; }
+.auth-brand-title { font-size: var(--font-small); font-weight: var(--weight-semibold); }
+.auth-brand-sub { color: var(--color-secondary); font-size: var(--font-caption); }
+.auth-context { display: none; }
+.auth-main { position: relative; isolation: isolate; padding-block: var(--space-8) var(--space-16); }
+.auth-main::before { position: absolute; z-index: -1; inset: 0; pointer-events: none; content: ''; background: radial-gradient(ellipse at 85% 45%, var(--color-accent-glow), transparent 60%); }
+.auth-grid { display: grid; align-items: center; gap: var(--space-8); }
+.auth-intro { min-width: 0; }
+.auth-eyebrow { margin-bottom: var(--space-4); }
+.auth-subtitle { max-width: var(--auth-form-width); margin-top: var(--space-5); }
+.auth-product-visual { display: none; }
+.auth-card { width: 100%; max-width: var(--auth-form-width); justify-self: center; padding: var(--space-6); border-radius: var(--radius-panel); }
+.auth-card-heading { --font-section: var(--auth-heading-size); display: grid; gap: var(--space-3); margin-bottom: var(--space-6); }
+.auth-tabs :deep(.el-tabs__header) { margin-bottom: var(--space-6); }
+.auth-tabs :deep(.el-tabs__nav-wrap::after) { height: var(--border-width); background: var(--color-border); }
+.auth-tabs :deep(.el-tabs__item) { height: var(--button-height); font-size: var(--font-body); font-weight: var(--weight-medium); }
+.auth-tabs :deep(.el-tabs__item.is-focus) { box-shadow: none; }
+.auth-tabs :deep(.el-form-item) { margin-bottom: var(--space-6); }
+.auth-tabs :deep(.el-form-item__label) { margin-bottom: var(--space-2); padding: 0; color: var(--color-text); font-size: var(--font-small); font-weight: var(--weight-medium); line-height: var(--leading-body); }
+.auth-tabs :deep(.el-input__wrapper) { min-height: var(--button-height-large); padding-inline: var(--space-3); border-radius: var(--radius-button); background: var(--color-surface); box-shadow: 0 0 0 var(--border-width) var(--color-border-hover) inset; transition: box-shadow var(--duration-fast) var(--ease-out); }
+.auth-tabs :deep(.el-input__wrapper.is-focus) { box-shadow: 0 0 0 var(--border-width) var(--color-accent) inset, var(--focus-ring); }
+.auth-tabs :deep(.el-input__inner) { color: var(--color-text); font: inherit; font-size: var(--font-body); }
+.auth-tabs :deep(.el-input__inner::placeholder) { color: var(--color-muted); }
+.auth-submit { width: 100%; }
+.auth-features-grid { display: grid; gap: var(--space-6); }
+.auth-feature { display: grid; align-content: start; gap: var(--space-4); }
+.auth-feature-icon { width: var(--space-6); height: var(--space-6); margin-bottom: var(--space-2); color: var(--color-accent); }
+.auth-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-3); padding-block: var(--space-8); }
+.auth-page [data-reveal-state="pending"] { opacity: 0; transform: translateY(var(--reveal-offset)); }
+.auth-page [data-reveal-state="visible"] { opacity: 1; transform: none; transition: opacity var(--duration-enter) var(--ease-out), transform var(--duration-enter) var(--ease-out); }
+@media (min-width: 640px) {
+  .auth-context { display: inline; }
+  .auth-main { padding-block: var(--space-12) var(--space-20); }
+  .auth-card { padding: var(--space-10); }
 }
-
-.login-shell {
-  display: flex;
-  width: 880px;
-  max-width: 100%;
-  min-height: 520px;
-  border-radius: 16px;
-  overflow: hidden;
-  background: #fff;
-  box-shadow: 0 24px 60px rgba(2, 6, 23, 0.35);
+@media (min-width: 768px) {
+  .auth-features-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .auth-feature { padding: var(--space-6); }
 }
-
-.brand-panel {
-  flex: 1.1;
-  padding: 44px 40px;
-  color: #fff;
-  display: flex;
-  flex-direction: column;
-  background:
-    linear-gradient(160deg, rgba(37, 99, 235, 0.35), rgba(15, 23, 42, 0.15)),
-    #1e3a8a;
+@media (min-width: 1024px) {
+  .auth-main { padding-block: var(--space-16); }
+  .auth-grid { grid-template-columns: minmax(0, 1fr) minmax(0, var(--auth-form-width)); gap: var(--space-16); min-height: calc(100svh - var(--nav-height) - var(--space-16) * 2); }
+  .auth-product-visual { display: flex; max-width: var(--auth-visual-width); margin-top: var(--space-10); }
 }
-
-.brand-head {
-  display: flex;
-  align-items: center;
-  gap: 14px;
+@media (min-width: 1280px) { .auth-grid { gap: var(--space-30); } }
+@media (prefers-reduced-motion: no-preference) {
+  .auth-eyebrow, .auth-subtitle, .auth-product-visual { animation: auth-enter var(--duration-enter) var(--ease-out) both; }
+  .auth-subtitle { animation-delay: var(--stagger-step); }
+  .auth-product-visual { animation-delay: calc(var(--stagger-step) * 2); }
 }
-
-.brand-title {
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-}
-
-.brand-sub {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.65);
-  margin-top: 2px;
-  letter-spacing: 1px;
-}
-
-.feature-list {
-  list-style: none;
-  margin: 40px 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.88);
-}
-
-.feature-list li {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  line-height: 1.5;
-}
-
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #60a5fa;
-  box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.2);
-  flex-shrink: 0;
-}
-
-.brand-footer {
-  margin-top: auto;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.5);
-}
-
-.login-card {
-  flex: 1;
-  border: none;
-  box-shadow: none;
-  padding: 40px 8px 24px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-
-.login-card :deep(.el-card__body) {
-  width: 100%;
-}
-
-h2 {
-  margin: 0;
-  color: #0f172a;
-  font-size: 22px;
-}
-
-.login-tip {
-  margin: 8px 0 22px;
-  color: #94a3b8;
-  font-size: 13px;
-}
-
-.login-card :deep(.el-tabs__item) {
-  font-size: 15px;
+@keyframes auth-enter { from { opacity: 0; transform: translateY(var(--reveal-offset)); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .auth-page :deep(*), .auth-page :deep(*::before), .auth-page :deep(*::after) { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  .auth-page [data-reveal-state] { opacity: 1; transform: none; }
 }
 </style>
