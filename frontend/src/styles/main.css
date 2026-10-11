@@ -1,4 +1,9 @@
-/* 全局主题：Element Plus CSS 变量覆盖 + 通用样式 */
+@import './tokens.css';
+@import './fonts.css';
+@import './element-plus.css';
+@import './application-shell.css';
+
+/* Legacy business-page styles retained until their individual phase-3 pass. */
 :root {
   /* 主色（品牌蓝） */
   --el-color-primary: #2563eb;
