@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import (
     admin,
     auth,
+    avatars,
     chats,
     comparisons,
     contracts,
@@ -60,6 +61,7 @@ if settings.request_log_enabled:
     app.add_middleware(RequestLogMiddleware)
 
 app.include_router(auth.router, prefix="/api/auth")
+app.include_router(avatars.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")
 app.include_router(contracts.router, prefix="/api")

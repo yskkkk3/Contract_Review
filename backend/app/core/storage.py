@@ -1,4 +1,4 @@
-"""Unified local/Alibaba Cloud OSS storage for contract artifacts."""
+"""Unified local/Alibaba Cloud OSS storage for application artifacts."""
 
 import shutil
 import tempfile
@@ -72,14 +72,19 @@ class Storage:
             raise StorageError(f"OSS URI belongs to an unexpected bucket: {bucket_name}")
         return key
 
-    def save_upload(self, source: BinaryIO, user_id: int, filename: str) -> str:
+    def save_upload(
+        self, source: BinaryIO, user_id: int, filename: str, *, category: str = "uploads"
+    ) -> str:
         """Persist an uploaded binary stream and return a local path or oss:// URI."""
         if self.backend == "oss":
-            key = self._object_key("uploads", user_id, filename)
+            key = self._object_key(category, user_id, filename)
             self.bucket.put_object(key, source)
             return self._oss_uri(key)
 
-        save_dir = Path(self.settings.upload_dir) / str(user_id)
+        save_dir = Path(self.settings.upload_dir)
+        if category != "uploads":
+            save_dir /= category
+        save_dir /= str(user_id)
         save_dir.mkdir(parents=True, exist_ok=True)
         path = save_dir / f"{uuid4().hex}-{Path(filename).name}"
         with path.open("wb") as destination:
@@ -99,6 +104,11 @@ class Storage:
         path = save_dir / f"{uuid4().hex}-{safe_name}"
         path.write_text(text, encoding="utf-8")
         return str(path)
+
+    def read_bytes(self, location: str) -> bytes:
+        if location.startswith("oss://"):
+            return self.bucket.get_object(self._parse_oss_uri(location)).read()
+        return Path(location).read_bytes()
 
     def read_text(self, location: str) -> str:
         if location.startswith("oss://"):

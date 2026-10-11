@@ -17,6 +17,7 @@ from app.core.security import (
 from app.models.user import User
 from app.schemas.auth import LoginRequest, LoginResponse, RefreshTokenRequest, UserInfo
 from app.schemas.base import GenericResponse
+from app.services.avatar import avatar_user_info
 
 router = APIRouter(tags=["auth"])
 settings = get_settings()
@@ -70,10 +71,8 @@ async def logout(current_user: User = Depends(get_current_user)):
 
 
 @router.get("/me", response_model=GenericResponse[UserInfo])
-async def me(current_user: User = Depends(get_current_user)):
-    return GenericResponse(
-        data=UserInfo(id=current_user.id, username=current_user.username, role=current_user.role)
-    )
+async def me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return GenericResponse(data=avatar_user_info(current_user, db))
 
 
 @router.get("/cas_login", response_model=None)

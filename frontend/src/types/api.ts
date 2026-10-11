@@ -23,6 +23,7 @@ export interface UserInfo {
   id: number
   username: string
   role: string
+  avatar_url?: string | null
   is_active?: boolean
   created_at?: string | null
 }

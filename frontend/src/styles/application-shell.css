@@ -19,6 +19,10 @@
 .app-account-menu { border: var(--border-width) solid var(--color-border) !important; border-radius: var(--radius-card) !important; box-shadow: var(--shadow-float) !important; }
 .app-account-menu .el-dropdown-menu { padding: var(--space-2); border-radius: inherit; }
 .app-account-menu .el-dropdown-menu__item { border-radius: var(--radius-button); min-height: var(--button-height-small); }
+.avatar-dialog { box-sizing: border-box; padding: var(--space-6); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-panel); box-shadow: var(--shadow-float); font-family: var(--font-sans); }
+.avatar-dialog .el-dialog__title { color: var(--color-text); font-size: var(--font-card); font-weight: var(--weight-semibold); }
+.avatar-dialog .el-dialog__header { padding: 0; }
+.avatar-dialog :focus-visible { outline: 2px solid var(--color-accent); outline-offset: var(--space-1); }
 
 @media (min-width: 640px) { .workspace-context-label { display: inline-block; } }
 @media (min-width: 1024px) {
@@ -27,5 +31,5 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .app-shell *, .app-shell *::before, .app-shell *::after,
-  .workspace-navigation-overlay, .app-mobile-navigation, .app-mobile-navigation *, .app-account-menu, .app-account-menu * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  .workspace-navigation-overlay, .app-mobile-navigation, .app-mobile-navigation *, .app-account-menu, .app-account-menu *, .avatar-dialog-overlay, .avatar-dialog-overlay *, .avatar-dialog, .avatar-dialog * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }

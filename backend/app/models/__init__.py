@@ -5,7 +5,7 @@ from app.models.model_configs import ModelConfig
 from app.models.prompt_manage import Prompt
 from app.models.review import ReviewResult, ReviewTask
 from app.models.session_message import Message, Session, SessionTypeEnum
-from app.models.user import User
+from app.models.user import User, UserAvatar
 
 __all__ = [
     "ComparisonTask",
@@ -19,4 +19,5 @@ __all__ = [
     "Session",
     "SessionTypeEnum",
     "User",
+    "UserAvatar",
 ]

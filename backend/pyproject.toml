@@ -40,6 +40,7 @@ dependencies = [
     "jieba>=0.42",
     "openai>=1.60",
     "oss2>=2.19",
+    "pillow>=12.3.0",
 ]
 
 [project.optional-dependencies]

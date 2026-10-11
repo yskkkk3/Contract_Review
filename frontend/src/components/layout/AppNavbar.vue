@@ -1,22 +1,26 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { ElDropdown, ElDropdownItem, ElDropdownMenu } from 'element-plus'
-import { ArrowDown, ArrowRight, DocumentChecked, SwitchButton } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowRight, DocumentChecked, Picture, SwitchButton } from '@element-plus/icons-vue'
 import AppButton from '@/components/ui/AppButton.vue'
+import AppUserAvatar from '@/components/ui/AppUserAvatar.vue'
 import BrandLogo from './BrandLogo.vue'
 
-const props = defineProps<{
+defineProps<{
   title: string
   username: string
+  avatarUrl: string
   menuOpen: boolean
   scrolled: boolean
 }>()
-const emit = defineEmits<{ toggleMenu: []; logout: [] }>()
-const avatarText = computed(() => (props.username || 'U').slice(0, 1).toUpperCase())
+const emit = defineEmits<{ toggleMenu: []; logout: []; manageAvatar: [] }>()
+const accountTrigger = ref<HTMLButtonElement>()
+defineExpose({ focusAccount: () => accountTrigger.value?.focus() })
 
 function onCommand(command: string) {
   if (command === 'logout') emit('logout')
+  if (command === 'avatar') emit('manageAvatar')
 }
 </script>
 
@@ -36,12 +40,15 @@ function onCommand(command: string) {
           <AppButton class="navbar-review" :href="href" @click="navigate"><DocumentChecked class="navbar-icon" aria-hidden="true" />智能审阅<ArrowRight class="navbar-icon navbar-action-arrow" aria-hidden="true" /></AppButton>
         </RouterLink>
         <ElDropdown trigger="click" popper-class="design-system app-account-menu" @command="onCommand">
-          <button class="account-trigger" type="button" :aria-label="`账户菜单，${username || '用户'}`">
-            <span class="account-avatar" aria-hidden="true">{{ avatarText }}</span>
+          <button ref="accountTrigger" class="account-trigger" type="button" :aria-label="`账户菜单，${username || '用户'}`">
+            <AppUserAvatar :username="username" :src="avatarUrl" aria-hidden="true" />
             <span class="account-name">{{ username }}</span><ArrowDown class="account-caret" aria-hidden="true" />
           </button>
           <template #dropdown>
-            <ElDropdownMenu><ElDropdownItem command="logout"><SwitchButton class="navbar-icon" aria-hidden="true" />退出登录</ElDropdownItem></ElDropdownMenu>
+            <ElDropdownMenu>
+              <ElDropdownItem command="avatar"><Picture class="navbar-icon" aria-hidden="true" />更换头像</ElDropdownItem>
+              <ElDropdownItem command="logout"><SwitchButton class="navbar-icon" aria-hidden="true" />退出登录</ElDropdownItem>
+            </ElDropdownMenu>
           </template>
         </ElDropdown>
       </div>
@@ -72,7 +79,6 @@ function onCommand(command: string) {
 .navbar-action-arrow { margin: 0 0 0 var(--space-3); }
 .account-trigger { display: flex; align-items: center; gap: var(--space-2); min-width: var(--button-height); height: var(--button-height); padding: var(--space-1); border: 0; border-radius: var(--radius-button); color: var(--color-text); background: transparent; cursor: pointer; transition: background var(--duration-fast) var(--ease-out); }
 .account-trigger:hover { background: var(--color-surface); }
-.account-avatar { display: grid; place-items: center; width: var(--shell-avatar-size); height: var(--shell-avatar-size); border-radius: var(--radius-pill); background: var(--color-inset); color: var(--color-text); font-weight: var(--weight-semibold); font-size: var(--font-small); }
 .account-name { display: none; max-width: var(--shell-user-width); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-small); }
 .account-caret { display: none; width: var(--space-3); height: var(--space-3); color: var(--color-muted); }
 @media (min-width: 640px) {

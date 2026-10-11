@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -19,3 +19,12 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     role: Mapped[str] = mapped_column(String(32), default="user")  # user | admin
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class UserAvatar(Base):
+    """Separate metadata so existing users tables need no column migration."""
+
+    __tablename__ = "user_avatars"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    location: Mapped[str] = mapped_column(String(1024))

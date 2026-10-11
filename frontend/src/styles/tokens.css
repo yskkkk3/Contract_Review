@@ -93,6 +93,8 @@
   --auth-visual-height: 216px;
   --auth-visual-width: 480px;
   --auth-heading-size: 32px;
+  --avatar-preview-size: 96px;
+  --avatar-dialog-width: 480px;
 }
 
 [data-theme="dark"] {

@@ -8,6 +8,7 @@ import AppTypography from '@/components/ui/AppTypography.vue'
 import AppNavbar from '@/components/layout/AppNavbar.vue'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import AppFooter from '@/components/layout/AppFooter.vue'
+import AvatarDialog from '@/components/account/AvatarDialog.vue'
 import { APP_NAVIGATION } from '@/components/layout/navigation'
 
 const route = useRoute()
@@ -16,6 +17,8 @@ const auth = useAuthStore()
 const mainRef = ref<HTMLElement>()
 const mobileNavigationOpen = ref(false)
 const scrolled = ref(false)
+const avatarDialogOpen = ref(false)
+const navbar = ref<InstanceType<typeof AppNavbar>>()
 let desktopQuery: MediaQueryList | undefined
 
 const navigation = computed(() => APP_NAVIGATION.filter((item) => !item.adminOnly || auth.user?.role === 'admin'))
@@ -51,7 +54,8 @@ function onScroll() {
 <template>
   <div class="design-system app-shell">
     <a href="#workspace-main" class="workspace-skip-link">跳转到主要内容</a>
-    <AppNavbar :title="title" :username="auth.user?.username || ''" :menu-open="mobileNavigationOpen" :scrolled="scrolled" @toggle-menu="mobileNavigationOpen = !mobileNavigationOpen" @logout="onLogout" />
+    <AppNavbar ref="navbar" :title="title" :username="auth.user?.username || ''" :avatar-url="auth.avatarUrl" :menu-open="mobileNavigationOpen" :scrolled="scrolled" @toggle-menu="mobileNavigationOpen = !mobileNavigationOpen" @logout="onLogout" @manage-avatar="avatarDialogOpen = true" />
+    <AvatarDialog v-model="avatarDialogOpen" @closed="navbar?.focusAccount()" />
     <AppSidebar class="desktop-sidebar" :items="navigation" />
     <ElDrawer v-model="mobileNavigationOpen" class="design-system app-mobile-navigation" modal-class="workspace-navigation-overlay" title="导航" direction="ltr" size="min(var(--shell-drawer-width), calc(100vw - var(--space-10)))" destroy-on-close>
       <AppSidebar id="mobile-workspace-navigation" :items="navigation" @navigate="mobileNavigationOpen = false" />

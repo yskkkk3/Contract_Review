@@ -21,3 +21,4 @@ class UserInfo(BaseModel):
     id: int
     username: str
     role: str = "user"
+    avatar_url: str | None = None
