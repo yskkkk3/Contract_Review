@@ -14,8 +14,15 @@ export interface SseOptions {
 }
 
 export function openSse({ url, kind, token, body, onEvent, signal }: SseOptions): () => void {
-  void kind
   const controller = new AbortController()
+  let terminated = false
+  const dispatch = (payload: unknown) => {
+    const event = payload as { type?: string; event?: string }
+    if (kind === 'chat' ? event.type === 'done' || event.type === 'error' : event.event === 'end' || event.event === 'error') {
+      terminated = true
+    }
+    onEvent(payload)
+  }
   const external = signal
   const abort = () => controller.abort()
   if (external) {
@@ -64,7 +71,7 @@ export function openSse({ url, kind, token, body, onEvent, signal }: SseOptions)
             .join('\n')
           if (!raw) continue
           try {
-            onEvent(JSON.parse(raw))
+            dispatch(JSON.parse(raw))
           } catch {
             // 忽略无法解析的数据帧
           }
@@ -79,16 +86,22 @@ export function openSse({ url, kind, token, body, onEvent, signal }: SseOptions)
         .join('\n')
       if (raw) {
         try {
-          onEvent(JSON.parse(raw))
+          dispatch(JSON.parse(raw))
         } catch {
           // 忽略不完整的末尾数据帧
         }
+      }
+      if (!terminated && !controller.signal.aborted) {
+        const message = '连接已结束，但未收到完成结果，请重试'
+        onEvent({ type: 'error', event: 'error', message, data: { message } })
       }
     } catch (err) {
       if ((err as Error).name !== 'AbortError') {
         const message = 'SSE 连接中断'
         onEvent({ type: 'error', event: 'error', message, data: { message } })
       }
+    } finally {
+      external?.removeEventListener('abort', abort)
     }
   })()
 

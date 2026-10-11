@@ -53,6 +53,7 @@ const hasTrend = ref(false)
 const hasDepartments = ref(false)
 let trendChart: ReturnType<typeof echarts.init> | null = null
 let departmentChart: ReturnType<typeof echarts.init> | null = null
+let disposed = false
 
 const statCards = computed(() => [
   { label: '已审阅合同', value: overview.value?.reviewed_contracts ?? 0, bg: 'linear-gradient(135deg,#3b82f6,#2563eb)', icon: Document },
@@ -67,11 +68,13 @@ const statCards = computed(() => [
 ])
 
 onMounted(async () => {
+  window.addEventListener('resize', resizeCharts)
   const [overviewData, trends, departments] = await Promise.all([
     dashboardApi.overview(),
     dashboardApi.trends('day'),
     dashboardApi.departments(),
   ])
+  if (disposed) return
   overview.value = overviewData
   if (trends.length) {
     hasTrend.value = true
@@ -83,10 +86,10 @@ onMounted(async () => {
     await nextTick()
     renderDepartments(departments)
   }
-  window.addEventListener('resize', resizeCharts)
 })
 
 onUnmounted(() => {
+  disposed = true
   window.removeEventListener('resize', resizeCharts)
   trendChart?.dispose()
   departmentChart?.dispose()

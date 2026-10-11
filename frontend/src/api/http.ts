@@ -25,9 +25,10 @@ http.interceptors.response.use(
     }
     return resp
   },
-  (error) => {
+  async (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem(TOKEN_KEY)
+      const { useAuthStore } = await import('@/stores/auth')
+      useAuthStore().logout()
       router.push('/login')
     }
     const msg = error.response?.data?.msg || error.message || '网络错误'

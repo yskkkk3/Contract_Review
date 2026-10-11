@@ -28,7 +28,7 @@
             placeholder="围绕合同提问，如：付款条款有什么风险？"
             @keydown.enter.exact.prevent="send"
           />
-          <el-button type="primary" style="margin-left: 12px" :loading="sending" @click="send">发送</el-button>
+          <el-button type="primary" style="margin-left: 12px" :loading="sending" :disabled="loadingHistory" @click="send">发送</el-button>
         </div>
       </el-card>
     </el-col>
@@ -58,6 +58,8 @@ const input = ref('')
 const sending = ref(false)
 const msgRef = ref<HTMLElement>()
 const abortRef = ref<(() => void) | null>(null)
+const loadingHistory = ref(false)
+let sessionVersion = 0
 
 onMounted(async () => {
   const [sessionData, contractData] = await Promise.all([sessionApi.list('chat'), api.list()])
@@ -65,25 +67,38 @@ onMounted(async () => {
   files.value = contractData.filter((file) => file.parse_status === 'parsed')
 })
 
-onUnmounted(() => abortRef.value?.())
+onUnmounted(() => {
+  sessionVersion += 1
+  abortRef.value?.()
+})
 
 function newSession() {
+  sessionVersion += 1
   abortRef.value?.()
   currentId.value = undefined
   bindFileId.value = undefined
   messages.value = []
   input.value = ''
   sending.value = false
+  loadingHistory.value = false
 }
 
 async function switchSession(s: SessionInfo) {
+  const version = ++sessionVersion
   abortRef.value?.()
   sending.value = false
+  loadingHistory.value = true
   currentId.value = s.session_id
   bindFileId.value = s.file_id ?? undefined
-  const history = await sessionApi.history(s.session_id)
-  messages.value = history.map(toMessage)
-  scrollBottom()
+  messages.value = []
+  try {
+    const history = await sessionApi.history(s.session_id)
+    if (version !== sessionVersion) return
+    messages.value = history.map(toMessage)
+    scrollBottom()
+  } finally {
+    if (version === sessionVersion) loadingHistory.value = false
+  }
 }
 
 function fileTitle(fileId: number) {
@@ -91,17 +106,28 @@ function fileTitle(fileId: number) {
 }
 
 async function send() {
-  if (sending.value) return
+  if (sending.value || loadingHistory.value) return
   const content = input.value.trim()
   if (!content) return
-  if (!currentId.value) {
-    const s = await sessionApi.create(`问答-${Date.now()}`, 'chat', bindFileId.value)
-    sessions.value.unshift(s)
-    await switchSession(s)
+  const version = sessionVersion
+  sending.value = true
+  try {
+    if (!currentId.value) {
+      const s = await sessionApi.create(`问答-${Date.now()}`, 'chat', bindFileId.value)
+      if (version !== sessionVersion) return
+      sessions.value.unshift(s)
+      currentId.value = s.session_id
+      bindFileId.value = s.file_id ?? undefined
+      const history = await sessionApi.history(s.session_id)
+      if (version !== sessionVersion) return
+      messages.value = history.map(toMessage)
+    }
+  } catch {
+    if (version === sessionVersion) sending.value = false
+    return
   }
   messages.value.push({ role: 'user', content })
   input.value = ''
-  sending.value = true
   let acc = ''
   abortRef.value = openSse({
     url: `${import.meta.env.VITE_API_BASE || '/api'}/chats`,
@@ -109,6 +135,7 @@ async function send() {
     token: localStorage.getItem(TOKEN_KEY) || '',
     body: { session_id: currentId.value, content },
     onEvent: (payload) => {
+      if (version !== sessionVersion) return
       const ev = payload as { type: string; content?: string; message?: string }
       if (ev.type === 'content' && ev.content) {
         acc += ev.content
