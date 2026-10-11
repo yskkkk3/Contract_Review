@@ -1,0 +1,64 @@
+/* 全局主题：Element Plus CSS 变量覆盖 + 通用样式 */
+:root {
+  /* 主色（品牌蓝） */
+  --el-color-primary: #2563eb;
+  --el-color-primary-light-3: #60a5fa;
+  --el-color-primary-light-5: #93c5fd;
+  --el-color-primary-light-7: #bfdbfe;
+  --el-color-primary-light-8: #dbeafe;
+  --el-color-primary-light-9: #eff6ff;
+  --el-color-primary-dark-2: #1d4ed8;
+
+  /* 语义色微调 */
+  --el-color-success: #16a34a;
+  --el-color-warning: #d97706;
+  --el-color-danger: #dc2626;
+
+  /* 圆角 / 文本 / 边框 */
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 6px;
+  --el-border-color: #e2e8f0;
+  --el-border-color-light: #eef2f7;
+  --el-text-color-primary: #1e293b;
+  --el-text-color-regular: #475569;
+  --el-text-color-secondary: #94a3b8;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family:
+    'Inter',
+    'PingFang SC',
+    'Hiragino Sans GB',
+    'Microsoft YaHei',
+    'Helvetica Neue',
+    Arial,
+    sans-serif;
+  background: #f3f5f9;
+  color: var(--el-text-color-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 统一卡片质感：更轻的圆角与柔和的阴影 */
+.el-card {
+  border-radius: 12px;
+  border: 1px solid #eef1f6;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.04);
+}
+
+.el-card__header {
+  font-weight: 600;
+  color: #1e293b;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+/* 页面统一留白 */
+.el-main {
+  padding: 20px;
+}

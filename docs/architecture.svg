@@ -1,0 +1,163 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 950" width="100%" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrow-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#94A3B8"/>
+    </marker>
+  </defs>
+
+  <!-- 标题 -->
+  <text x="40" y="42" font-size="22" font-weight="700" fill="#0F172A">高校合同智能审阅系统 · 总体架构</text>
+  <text x="40" y="66" font-size="14" fill="#64748B">Vue3 + FastAPI + LangGraph Multi-Agent + 混合检索 RAG · Docker Compose 六服务部署</text>
+
+  <!-- ============ 展示层 ============ -->
+  <rect x="20" y="90" width="920" height="110" rx="10" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1.5"/>
+  <text x="40" y="116" font-size="14" font-weight="700" fill="#1E40AF">展示层 · 前端 Vue3 + TypeScript（Nginx :80）</text>
+  <g font-size="13" fill="#1E293B">
+    <rect x="40" y="128" width="280" height="56" rx="6" fill="#FFFFFF" stroke="#93C5FD"/>
+    <text x="180" y="149" text-anchor="middle" font-weight="600">页面：登录 / 看板 / 合同</text>
+    <text x="180" y="170" text-anchor="middle">审阅 / 比对 / 问答 / 配置</text>
+    <rect x="340" y="128" width="260" height="56" rx="6" fill="#FFFFFF" stroke="#93C5FD"/>
+    <text x="470" y="149" text-anchor="middle" font-weight="600">SSE 客户端</text>
+    <text x="470" y="170" text-anchor="middle">审阅风险点 · 聊天流实时渲染</text>
+    <rect x="620" y="128" width="300" height="56" rx="6" fill="#FFFFFF" stroke="#93C5FD"/>
+    <text x="770" y="149" text-anchor="middle" font-weight="600">API 客户端</text>
+    <text x="770" y="170" text-anchor="middle">axios + postSSE · 拦截器鉴权</text>
+  </g>
+
+  <!-- ============ 应用层 ============ -->
+  <rect x="20" y="230" width="920" height="110" rx="10" fill="#F0FDF4" stroke="#22C55E" stroke-width="1.5"/>
+  <text x="40" y="256" font-size="14" font-weight="700" fill="#166534">应用层 · FastAPI 后端（:8080）</text>
+  <g font-size="13" fill="#1E293B">
+    <rect x="40" y="268" width="210" height="56" rx="6" fill="#FFFFFF" stroke="#86EFAC"/>
+    <text x="145" y="289" text-anchor="middle" font-weight="600">鉴权 · JWT / PBKDF2</text>
+    <text x="145" y="310" text-anchor="middle">CAS 单点登录预留</text>
+    <rect x="270" y="268" width="210" height="56" rx="6" fill="#FFFFFF" stroke="#86EFAC"/>
+    <text x="375" y="289" text-anchor="middle" font-weight="600">文档解析</text>
+    <text x="375" y="310" text-anchor="middle">pdf / docx / doc → 纯文本</text>
+    <rect x="500" y="268" width="210" height="56" rx="6" fill="#FFFFFF" stroke="#86EFAC"/>
+    <text x="605" y="289" text-anchor="middle" font-weight="600">业务路由 · SSE 编排</text>
+    <text x="605" y="310" text-anchor="middle">审阅 / 聊天 / 比对 / 看板</text>
+    <rect x="730" y="268" width="190" height="56" rx="6" fill="#FFFFFF" stroke="#86EFAC"/>
+    <text x="825" y="289" text-anchor="middle" font-weight="600">配置中心</text>
+    <text x="825" y="310" text-anchor="middle">类型 / 提示词 / 模型</text>
+  </g>
+
+  <!-- ============ Agent 编排层 ============ -->
+  <rect x="20" y="370" width="920" height="220" rx="10" fill="#FFF7ED" stroke="#F97316" stroke-width="1.5"/>
+  <text x="40" y="396" font-size="14" font-weight="700" fill="#9A3412">Agent 编排层 · LangGraph 状态机</text>
+  <text x="40" y="414" font-size="12" fill="#C2410C">START → intent → router → specialists（并行）→ gate → arbitration → END · 失败自动降级 / 重试</text>
+  <g font-size="13" fill="#1E293B">
+    <rect x="40" y="430" width="150" height="90" rx="6" fill="#FFFFFF" stroke="#FDBA74"/>
+    <text x="115" y="459" text-anchor="middle" font-weight="600">意图识别</text>
+    <text x="115" y="479" text-anchor="middle">LLM 结构化分类</text>
+    <text x="115" y="499" text-anchor="middle">规则正则降级</text>
+    <rect x="210" y="430" width="150" height="90" rx="6" fill="#FFFFFF" stroke="#FDBA74"/>
+    <text x="285" y="459" text-anchor="middle" font-weight="600">Router 分发</text>
+    <text x="285" y="479" text-anchor="middle">条款 → 风险维度</text>
+    <text x="285" y="499" text-anchor="middle">关键词映射</text>
+    <rect x="380" y="430" width="250" height="90" rx="6" fill="#FFFFFF" stroke="#FDBA74"/>
+    <text x="505" y="459" text-anchor="middle" font-weight="600">6 个风险维度专家 · 并行</text>
+    <text x="505" y="479" text-anchor="middle">主体 / 财务 / 知产 / 违约</text>
+    <text x="505" y="499" text-anchor="middle">验收 / 争议 · ReAct + RAG 工具</text>
+    <rect x="650" y="430" width="110" height="90" rx="6" fill="#FFFFFF" stroke="#FDBA74"/>
+    <text x="705" y="459" text-anchor="middle" font-weight="600">Gate 质检</text>
+    <text x="705" y="479" text-anchor="middle">格式 / 缺失</text>
+    <text x="705" y="499" text-anchor="middle">幻觉检查</text>
+    <rect x="780" y="430" width="140" height="90" rx="6" fill="#FFFFFF" stroke="#FDBA74"/>
+    <text x="850" y="459" text-anchor="middle" font-weight="600">Arbitration</text>
+    <text x="850" y="479" text-anchor="middle">去重 · 冲突消解</text>
+    <text x="850" y="499" text-anchor="middle">风险分级 · 摘要</text>
+  </g>
+
+  <!-- ============ RAG 检索层 ============ -->
+  <rect x="20" y="620" width="920" height="120" rx="10" fill="#ECFEFF" stroke="#06B6D4" stroke-width="1.5"/>
+  <text x="40" y="646" font-size="14" font-weight="700" fill="#155E75">RAG 检索层 · 混合检索 + 精排</text>
+  <g font-size="13" fill="#1E293B">
+    <rect x="40" y="658" width="180" height="56" rx="6" fill="#FFFFFF" stroke="#67E8F9"/>
+    <text x="130" y="679" text-anchor="middle" font-weight="600">Dense 稠密检索</text>
+    <text x="130" y="700" text-anchor="middle">bge-m3 · Qdrant</text>
+    <rect x="240" y="658" width="180" height="56" rx="6" fill="#FFFFFF" stroke="#67E8F9"/>
+    <text x="330" y="679" text-anchor="middle" font-weight="600">Sparse 稀疏检索</text>
+    <text x="330" y="700" text-anchor="middle">BM25 · jieba 分词</text>
+    <rect x="440" y="658" width="150" height="56" rx="6" fill="#FFFFFF" stroke="#67E8F9"/>
+    <text x="515" y="679" text-anchor="middle" font-weight="600">RRF 融合</text>
+    <text x="515" y="700" text-anchor="middle">k = 60 双路合并</text>
+    <rect x="610" y="658" width="170" height="56" rx="6" fill="#FFFFFF" stroke="#67E8F9"/>
+    <text x="695" y="679" text-anchor="middle" font-weight="600">Rerank 精排</text>
+    <text x="695" y="700" text-anchor="middle">bge-reranker-v2-m3</text>
+    <rect x="800" y="658" width="120" height="56" rx="6" fill="#FFFFFF" stroke="#67E8F9"/>
+    <text x="860" y="679" text-anchor="middle" font-weight="600">Top-5 证据</text>
+    <text x="860" y="700" text-anchor="middle">带来源回传</text>
+  </g>
+
+  <!-- ============ 基础设施层 ============ -->
+  <rect x="20" y="770" width="920" height="130" rx="10" fill="#F1F5F9" stroke="#64748B" stroke-width="1.5"/>
+  <text x="40" y="796" font-size="14" font-weight="700" fill="#334155">基础设施层 · Docker Compose 网络</text>
+  <g font-size="13" fill="#1E293B">
+    <rect x="40" y="808" width="180" height="56" rx="6" fill="#FFFFFF" stroke="#CBD5E1"/>
+    <text x="130" y="829" text-anchor="middle" font-weight="600">MySQL 8</text>
+    <text x="130" y="850" text-anchor="middle">业务数据 · 10 张表</text>
+    <rect x="240" y="808" width="180" height="56" rx="6" fill="#FFFFFF" stroke="#CBD5E1"/>
+    <text x="330" y="829" text-anchor="middle" font-weight="600">Redis 7</text>
+    <text x="330" y="850" text-anchor="middle">缓存 · 任务状态</text>
+    <rect x="440" y="808" width="180" height="56" rx="6" fill="#FFFFFF" stroke="#CBD5E1"/>
+    <text x="530" y="829" text-anchor="middle" font-weight="600">Qdrant 向量库</text>
+    <text x="530" y="850" text-anchor="middle">知识三层 collection</text>
+    <rect x="640" y="808" width="180" height="56" rx="6" fill="#FFFFFF" stroke="#CBD5E1"/>
+    <text x="730" y="829" text-anchor="middle" font-weight="600">Langfuse 自托管</text>
+    <text x="730" y="850" text-anchor="middle">LLM trace 可观测</text>
+  </g>
+  <text x="40" y="888" font-size="12" fill="#64748B">说明：backend 通过容器网络访问 MySQL / Redis / Qdrant / Langfuse；Langfuse 承接全部 LLM / Embedding / Rerank 调用链路的 trace。</text>
+
+  <!-- ============ SiliconFlow 外部列 ============ -->
+  <rect x="980" y="370" width="160" height="500" rx="10" fill="#0F172A"/>
+  <text x="1060" y="402" text-anchor="middle" font-size="14" font-weight="700" fill="#FFFFFF">SiliconFlow API</text>
+  <text x="1060" y="424" text-anchor="middle" font-size="12" fill="#CBD5E1">外部 LLM 供应商</text>
+  <g font-size="12" fill="#E2E8F0" text-anchor="middle">
+    <text x="1060" y="470">DeepSeek-V3.2</text>
+    <text x="1060" y="492">审阅 · 专家推理</text>
+    <text x="1060" y="540">DeepSeek-V4-Flash</text>
+    <text x="1060" y="562">意图 · 聊天</text>
+    <text x="1060" y="610">bge-m3</text>
+    <text x="1060" y="632">Embedding 1024 维</text>
+    <text x="1060" y="680">bge-reranker-v2-m3</text>
+    <text x="1060" y="702">Rerank 精排</text>
+  </g>
+  <text x="1060" y="846" text-anchor="middle" font-size="11" fill="#94A3B8">API key 仅存于 .env</text>
+
+  <!-- ============ 数据流箭头 ============ -->
+  <!-- FE → BE -->
+  <line x1="480" y1="200" x2="480" y2="224" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="492" y="216" font-size="12" fill="#475569">HTTP + SSE</text>
+  <!-- BE → Agent -->
+  <line x1="505" y1="340" x2="505" y2="364" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="517" y="356" font-size="12" fill="#475569">审阅任务</text>
+  <!-- Agent 主链 -->
+  <line x1="190" y1="475" x2="206" y2="475" stroke="#F97316" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="360" y1="475" x2="376" y2="475" stroke="#F97316" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="630" y1="475" x2="646" y2="475" stroke="#F97316" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="760" y1="475" x2="776" y2="475" stroke="#F97316" stroke-width="2" marker-end="url(#arrow)"/>
+  <!-- 专家 → RAG（检索） -->
+  <line x1="505" y1="520" x2="505" y2="652" stroke="#06B6D4" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="517" y="590" font-size="12" fill="#0E7490">ReAct 检索</text>
+  <!-- RAG → 专家（证据回传） -->
+  <line x1="560" y1="652" x2="560" y2="526" stroke="#06B6D4" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="572" y="596" font-size="12" fill="#0E7490">证据回传</text>
+  <!-- 仲裁 → BE（SSE 结果） -->
+  <line x1="850" y1="430" x2="850" y2="330" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="862" y="384" font-size="12" fill="#475569">SSE 结果</text>
+  <!-- RAG 内部 -->
+  <line x1="220" y1="686" x2="236" y2="686" stroke="#06B6D4" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="420" y1="686" x2="436" y2="686" stroke="#06B6D4" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="590" y1="686" x2="606" y2="686" stroke="#06B6D4" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="780" y1="686" x2="796" y2="686" stroke="#06B6D4" stroke-width="2" marker-end="url(#arrow)"/>
+  <!-- Agent → SiliconFlow（LLM） -->
+  <line x1="940" y1="475" x2="976" y2="475" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arrow-gray)"/>
+  <text x="958" y="467" font-size="11" fill="#64748B">LLM</text>
+  <!-- RAG → SiliconFlow（embed/rerank） -->
+  <line x1="940" y1="686" x2="976" y2="686" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arrow-gray)"/>
+  <text x="958" y="678" font-size="11" fill="#64748B">embed / rerank</text>
+</svg>

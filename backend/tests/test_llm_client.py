@@ -1,0 +1,192 @@
+"""LLMClient 工程化测试：限流、缓存与多供应商路由。"""
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+
+import app.rag.client as client_mod
+from app.rag.client import LLMClient
+
+
+class _FakeChoice:
+    def __init__(self, text: str = "ok", tool_calls=None):
+        self.message = type(
+            "Msg",
+            (),
+            {"content": text, "tool_calls": tool_calls, "finish_reason": "stop"},
+        )()
+
+
+class _FakeResp:
+    def __init__(self, text: str = "ok"):
+        self.choices = [_FakeChoice(text)]
+
+
+@pytest.fixture
+def fake_openai(monkeypatch):
+    """CI 无 .env：mock AsyncOpenAI 构造，避免 openai SDK 强制校验 API key。"""
+
+    class _FakeCompletions:
+        def __init__(self):
+            self.chat = type("Chat", (), {"completions": type("Comp", (), {"create": None})()})()
+            self.embeddings = type("Emb", (), {"create": None})()
+
+    class _FakeAsyncOpenAI:
+        def __init__(self, **kwargs):
+            self.chat = type("Chat", (), {"completions": type("Comp", (), {"create": None})()})()
+            self.embeddings = type("Emb", (), {"create": None})()
+
+    monkeypatch.setattr(client_mod, "AsyncOpenAI", _FakeAsyncOpenAI)
+    return _FakeAsyncOpenAI
+
+
+@pytest.mark.asyncio
+async def test_chat_acquires_semaphore(monkeypatch, fake_openai):
+    """并发上限：超过 MAX_CONCURRENT_LLM 的调用必须排队（信号量生效）。"""
+    client = LLMClient()
+    client._sem = asyncio.Semaphore(2)
+
+    active = 0
+    peak = 0
+    gate = asyncio.Event()
+
+    async def fake_create(**kwargs):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.05)
+        active -= 1
+        gate.set()
+        return _FakeResp()
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", fake_create)
+
+    results = await asyncio.gather(*[client.chat([{"role": "user", "content": "x"}]) for _ in range(6)])
+    assert results == ["ok"] * 6
+    assert peak <= 2, f"并发峰值 {peak} 超出信号量上限 2"
+
+
+@pytest.mark.asyncio
+async def test_chat_with_tools_acquires_semaphore(monkeypatch, fake_openai):
+    client = LLMClient()
+    client._sem = asyncio.Semaphore(1)
+
+    async def fake_create(**kwargs):
+        await asyncio.sleep(0.02)
+        return _FakeResp()
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", fake_create)
+    msg = await client.chat_with_tools([{"role": "user", "content": "x"}], tools=[{"type": "function", "function": {"name": "f", "parameters": {"type": "object"}}}])
+    assert msg.content == "ok"
+
+
+@pytest.mark.asyncio
+async def test_prompt_cache_extra_body(monkeypatch, fake_openai):
+    """开启 prompt cache 时 extra_body 带 cache_prompt=True。"""
+    client = LLMClient()
+    client._prompt_cache = True
+    captured = {}
+
+    async def fake_create(**kwargs):
+        captured.update(kwargs)
+        return _FakeResp()
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", fake_create)
+    await client.chat([{"role": "user", "content": "hi"}])
+    assert captured["extra_body"]["cache_prompt"] is True
+
+
+@pytest.mark.asyncio
+async def test_prompt_cache_disabled(monkeypatch, fake_openai):
+    client = LLMClient()
+    client._prompt_cache = False
+    captured = {}
+
+    async def fake_create(**kwargs):
+        captured.update(kwargs)
+        return _FakeResp()
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", fake_create)
+    await client.chat([{"role": "user", "content": "hi"}])
+    assert "extra_body" not in captured
+
+
+@pytest.mark.asyncio
+async def test_embed_uses_independent_embedding_client(monkeypatch, fake_openai):
+    client = LLMClient()
+    captured = {}
+
+    async def fake_create(**kwargs):
+        captured.update(kwargs)
+        item_1 = type("Embedding", (), {"index": 1, "embedding": [0.3, 0.4]})()
+        item_0 = type("Embedding", (), {"index": 0, "embedding": [0.1, 0.2]})()
+        return type("Response", (), {"data": [item_1, item_0]})()
+
+    monkeypatch.setattr(client._embedding_openai.embeddings, "create", fake_create)
+    vectors = await client.embed(["a", "b"])
+
+    assert vectors == [[0.1, 0.2], [0.3, 0.4]]
+    assert captured["model"] == client_mod.settings.embedding_model
+    assert captured["dimensions"] == client_mod.settings.embedding_dimensions
+
+
+@pytest.mark.asyncio
+async def test_rerank_uses_independent_endpoint(monkeypatch, fake_openai):
+    client = LLMClient()
+    captured = {}
+
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"results": [{"index": 0, "relevance_score": 0.99}]}
+
+    class _Http:
+        async def post(self, url, json):
+            captured["url"] = url
+            captured["json"] = json
+            return _Response()
+
+    client._http = _Http()
+    result = await client.rerank("付款期限", ["甲方应付款"], top_n=1)
+
+    assert captured["url"] == client.rerank_url
+    assert captured["json"]["model"] == client_mod.settings.rerank_model
+    assert result[0]["relevance_score"] == 0.99
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_events_cache_and_semaphore(monkeypatch, fake_openai):
+    client = LLMClient()
+    client._sem = asyncio.Semaphore(1)
+    client._prompt_cache = True
+    captured = {}
+
+    class _FakeChunk:
+        def __init__(self):
+            self.usage = None
+            self.choices = [type("C", (), {"delta": type("D", (), {"content": "a"})()})()]
+
+    class _FakeStream:
+        def __init__(self):
+            self._chunks = [_FakeChunk()]
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if not self._chunks:
+                raise StopAsyncIteration
+            return self._chunks.pop(0)
+
+    async def fake_create(**kwargs):
+        captured.update(kwargs)
+        return _FakeStream()
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", fake_create)
+    events = [e async for e in client.chat_stream_events([{"role": "user", "content": "hi"}])]
+    assert events[0] == ("start", None)
+    assert events[-1] == ("delta", "a")
+    assert captured["extra_body"]["cache_prompt"] is True

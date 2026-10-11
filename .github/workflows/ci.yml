@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Backend Lint (ruff)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      # ruff 位于 dev 依赖组，必须安装 dev 依赖
+      - run: uv sync --frozen
+      - run: uv run ruff check app/ tests/ scripts/
+
+  test:
+    name: Backend Test (pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run pytest tests/ -q
+        env:
+          DATABASE_URL: sqlite://
+          JWT_SECRET_KEY: ci-secret-0123456789abcdef
+          UPLOAD_DIR: /tmp/cr-uploads
+          OSS_BUCKET_DIR: /tmp/cr-parsed
+
+  frontend-build:
+    name: Frontend Build (Vue3+TS)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+
+  docker-build:
+    name: Docker Images Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -t contract-review-backend:ci ./backend
+      - name: Build frontend image
+        run: docker build -t contract-review-frontend:ci ./frontend
+
+  deploy:
+    name: Deploy (placeholder)
+    runs-on: ubuntu-latest
+    needs: [lint, test, frontend-build, docker-build]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy hook (customize for your server)
+        run: |
+          echo "::notice::Deploy step is a placeholder. Connect SSH/webhook or registry push here."
+
+  rag-eval:
+    name: RAG Eval Gate (golden set)
+    runs-on: ubuntu-latest
+    services:
+      qdrant:
+        image: qdrant/qdrant:v1.13.4
+        ports:
+          - 6333:6333
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: Golden set static gate (no key required)
+        run: uv run python scripts/check_golden.py
+      - name: Full retrieval eval + metric gate (requires SILICONFLOW_API_KEY secret)
+        if: env.SILICONFLOW_API_KEY != ''
+        env:
+          SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
+          QDRANT_HOST: localhost
+          QDRANT_PORT: "6333"
+          DATABASE_URL: sqlite://
+          JWT_SECRET_KEY: ci-secret-0123456789abcdef
+        run: |
+          uv run python scripts/ingest_kb.py
+          uv run python scripts/eval_rag.py | tee /tmp/eval.out
+          uv run python scripts/gate_metrics.py --recall5 0.6 --mrr 0.4 --ndcg 0.5
+      - name: Skip notice (no secret configured)
+        if: env.SILICONFLOW_API_KEY == ''
+        run: echo "::notice::SILICONFLOW_API_KEY secret 未配置，跳过完整检索评测（静态门禁已通过）；配置 secret 后自动成为指标门禁"

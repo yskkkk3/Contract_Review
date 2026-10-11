@@ -1,0 +1,147 @@
+# 高校合同智能审阅系统 · Docker Compose（六服务）
+# 用法: docker compose -f deploy/docker-compose.yml up -d --build
+# 首次启动后执行知识库构建: docker compose exec backend python scripts/ingest_kb.py
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: cr-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root-pass
+      MYSQL_DATABASE: contract_review
+      MYSQL_USER: contract
+      MYSQL_PASSWORD: change-me
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - cr_mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot-pass"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: cr-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - cr_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:v1.19.1
+    container_name: cr-qdrant
+    volumes:
+      - cr_qdrant:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333 && echo ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  langfuse-db:
+    image: postgres:16-alpine
+    container_name: cr-langfuse-db
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: change-me-langfuse-db
+      POSTGRES_DB: langfuse
+    volumes:
+      - cr_langfuse_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: cr-langfuse
+    environment:
+      DATABASE_URL: postgresql://langfuse:change-me-langfuse-db@langfuse-db:5432/langfuse
+      HOSTNAME: 0.0.0.0
+      NEXTAUTH_URL: http://localhost:13000
+      NEXTAUTH_SECRET: change-me-nextauth-secret
+      SALT: change-me-salt
+      ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    ports:
+      - "13000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/public/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: ../backend
+    container_name: cr-backend
+    # 从项目根目录 .env 注入全部配置（含 SILICONFLOW_API_KEY）。
+    # 路径相对本 compose 文件（deploy/）解析；文件不存在会在此处直接报错，便于定位。
+    env_file:
+      - ../.env
+    environment:
+      APP_ENV: prod
+      DEBUG: "false"
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: contract
+      MYSQL_PASSWORD: change-me
+      MYSQL_DB: contract_review
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      # These credentials come from env_file above.  Do not redeclare them
+      # with ${...:-}: Compose interpolation happens before env_file is read,
+      # so an unset shell variable would overwrite the value with an empty one.
+      LANGFUSE_HOST: http://langfuse:3000
+      FRONTEND_URL: http://localhost:80
+      UPLOAD_DIR: /data/uploads
+      OSS_BUCKET_DIR: /data/parsed
+    volumes:
+      - cr_parsed:/data
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      langfuse:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  frontend:
+    build:
+      context: ../frontend
+    container_name: cr-frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  cr_mysql:
+  cr_redis:
+  cr_qdrant:
+  cr_langfuse_db:
+  cr_parsed:

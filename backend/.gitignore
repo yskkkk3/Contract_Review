@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.data/
+data/*.db
+data/qdrant_local/
+data/uploads/
+data/parsed/

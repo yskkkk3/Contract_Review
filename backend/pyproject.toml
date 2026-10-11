@@ -1,0 +1,93 @@
+[project]
+name = "contract-review-backend"
+version = "0.1.0"
+description = "AI contract review agent system for university procurement (FastAPI + LangGraph + Hybrid RAG)"
+authors = [
+    { name = "yskkkk3" },
+]
+maintainers = [
+    { name = "yskkkk3" },
+]
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.141",
+    "uvicorn[standard]>=0.53",
+    "pydantic>=2.13",
+    "pydantic-settings>=2.15",
+    "sqlalchemy>=2.0.54",
+    "pymysql>=1.1",
+    "cryptography>=44.0",
+    "redis>=8.1",
+    "PyJWT>=2.10",
+    "python-multipart>=0.0.20",
+    "httpx>=0.28",
+    "sse-starlette>=2.3",
+    "langgraph>=1.2",
+    "langchain-core>=1.6",
+    "langchain-openai>=1.6",
+    "qdrant-client>=1.19",
+    "pypdf>=5.0",
+    "pdfplumber>=0.11",
+    "pymupdf>=1.24",
+    "pdf2image>=1.17",
+    "pytesseract>=0.3.13",
+    "python-docx>=1.2",
+    "mcp>=1.9",
+    "langfuse>=2.55",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.2",
+    "rank-bm25>=0.2",
+    "jieba>=0.42",
+    "openai>=1.60",
+    "oss2>=2.19",
+]
+
+[project.optional-dependencies]
+eval = [
+    "ragas>=0.4,<0.5",
+    "datasets>=2.19",
+    # RAGAS LLM-as-judge 兼容层：官方推荐 LangchainEmbeddingsWrapper（AnswerRelevancy 依赖 embed_query）
+    "langchain-openai>=0.3",
+]
+bench = [
+    "locust>=2.46",
+]
+heavy-doc = [
+    "docling>=2.2",
+    "mineru>=2.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "SIM"]
+# B008: FastAPI 标准写法（Depends 在参数默认值），统一忽略
+ignore = ["E501", "B008"]
+
+[[tool.uv.index]]
+url = "https://pypi.org/simple"
+default = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "fakeredis>=2.38.0",
+    "python-docx>=1.2.0",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.11",
+    # 本地开发：嵌入式 Redis 模拟（无 Docker 环境替代 redis-server）
+    "redislite>=6.2.9; sys_platform != 'win32'",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
