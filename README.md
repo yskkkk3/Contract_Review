@@ -28,7 +28,7 @@
 | 合同比对 | 上传两份合同逐条比对差异 |
 | 合同问答 | 基于合同文本与知识库的流式问答 |
 | 看板统计 | 风险分布、维度命中率、审阅耗时趋势（ECharts） |
-| 知识库 | 深大采购制度 + 法规 + 合同模板三层语料，自动 ingest |
+| 知识库 | 高校采购制度 + 法规 + 合同模板三层语料，自动 ingest |
 | 管理配置 | 合同类型 / 专家提示词 / 模型参数在线配置 |
 | 依赖策略 | 仅用官方独立包：langgraph / langchain-core / langchain-openai + 原生 openai SDK；**主环境不含 langchain-community** |
 | 多引擎解析 | pdfplumber→PyMuPDF→pypdf→docx→LibreOffice→OCR→DeepSeek OCR→Docling/MinerU 有序回退链（引擎可配置） |
