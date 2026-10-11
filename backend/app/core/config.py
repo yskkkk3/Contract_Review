@@ -106,7 +106,7 @@ class Settings(BaseSettings):
     ocr_lang: str = "chi_sim"
     ocr_base_url: str = ""
     ocr_api_key: str = ""
-    ocr_model: str = "qwen-vl-ocr-latest"
+    ocr_model: str = "qwen3.5-ocr"
     ocr_max_pages: int = 10
     # 兼容旧配置名
     deepseek_ocr_api_key: str = ""

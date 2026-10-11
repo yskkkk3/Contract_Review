@@ -56,7 +56,7 @@ ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:6333:127.0.0.1:6333 root@192.168
 ## 千问 OCR 与 OSS
 
 - 千问 OCR 默认复用 `EMBEDDING_API_KEY`，模型为
-  `qwen-vl-ocr-latest`。
+  `qwen3.5-ocr`。
 - 云端 OCR 会把扫描页发送到百炼，默认不启用。明确允许上传合同页时，在
   `DOC_PARSER_ENGINES` 末尾加入 `cloud_ocr`。
 - OSS 配置入口已预留在 `.env`。提供 Endpoint、Bucket、AccessKey ID 和

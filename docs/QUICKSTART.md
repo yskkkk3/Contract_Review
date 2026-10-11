@@ -112,7 +112,7 @@ locust -f scripts/bench_locust.py --host http://localhost:8080 \
 
 ## 5.5 文档解析与 MCP
 
-- **多引擎解析**：默认回退链 `pdfplumber→pymupdf→pypdf→docx→libreoffice→ocr`；本地 OCR 需要 poppler 与 tesseract。可选 `cloud_ocr` 使用百炼 `qwen-vl-ocr-latest`，默认复用 Embedding Key；启用后扫描页会发送到百炼。复杂版面可选 `uv sync --extra heavy-doc`（docling/mineru）。
+- **多引擎解析**：默认回退链 `pdfplumber→pymupdf→pypdf→docx→libreoffice→ocr`；本地 OCR 需要 poppler 与 tesseract。可选 `cloud_ocr` 使用百炼 `qwen3.5-ocr`，默认复用 Embedding Key；启用后扫描页会发送到百炼。复杂版面可选 `uv sync --extra heavy-doc`（docling/mineru）。
 - **MCP Server**：`uv run python -m app.mcp.server`（stdio，供 Claude/Cursor 等客户端）；或 `.env` 设 `MCP_ENABLED=true` 后经 `/api/mcp`（streamable-http）接入；工具：search_knowledge_base / ask_contract_assistant / health_check。
 - **规则引擎 Skills**：`app/skills/rules.py` 提供 6 维度 8 条确定性规则（预付款>30%、违约金基数、验收标准等），输出与 LLM 专家同构，可并入审阅。
 
