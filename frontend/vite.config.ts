@@ -18,6 +18,10 @@ export default defineConfig({
     sourcemap: false,
     chunkSizeWarningLimit: 600,
     rollupOptions: {
+      input: {
+        app: fileURLToPath(new URL('./index.html', import.meta.url)),
+        designSystem: fileURLToPath(new URL('./design-system.html', import.meta.url)),
+      },
       output: {
         manualChunks: {
           vue: ['vue', 'vue-router', 'pinia'],

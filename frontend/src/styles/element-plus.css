@@ -1,0 +1,24 @@
+/* Opt-in bridge: existing business pages keep their current theme until phase 3. */
+.design-system {
+  --el-color-primary: var(--color-accent);
+  --el-color-primary-dark-2: var(--color-accent-hover);
+  --el-color-primary-light-3: var(--color-accent-light-3);
+  --el-color-primary-light-5: var(--color-accent-light-5);
+  --el-color-primary-light-7: var(--color-accent-light-7);
+  --el-color-primary-light-8: var(--color-accent-light-8);
+  --el-color-primary-light-9: var(--color-accent-soft);
+  --el-text-color-primary: var(--color-text);
+  --el-text-color-regular: var(--color-secondary);
+  --el-text-color-secondary: var(--color-muted);
+  --el-border-color: var(--color-border-hover);
+  --el-border-color-light: var(--color-border);
+  --el-border-radius-base: var(--radius-button);
+  --el-bg-color: var(--color-canvas);
+  --el-fill-color-blank: var(--color-canvas);
+  --el-fill-color-light: var(--color-surface);
+  --el-font-family: var(--font-sans);
+  --el-font-size-base: var(--font-small);
+  --el-transition-duration: var(--duration-normal);
+  --el-transition-duration-fast: var(--duration-fast);
+  --el-transition-function-ease-in-out-bezier: var(--ease-out);
+}
