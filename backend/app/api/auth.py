@@ -1,4 +1,6 @@
 """Auth routes: login / refresh / logout / me / CAS placeholder."""
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
@@ -36,10 +38,15 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
     if not user.is_active:
         raise HTTPException(403, "User disabled")
 
-    access_token = create_access_token(user.username, user.id)
-    refresh_token = create_refresh_token(user.username, user.id)
+    session_id = secrets.token_urlsafe(32)
+    access_token = create_access_token(user.username, user.id, session_id)
+    refresh_token = create_refresh_token(user.username, user.id, session_id)
     redis = get_redis()
-    await redis.set(f"access_token:{user.id}", access_token, ex=settings.access_token_expire_minutes * 60)
+    await redis.set(
+        f"access_token:{user.id}",
+        session_id,
+        ex=settings.access_token_expire_minutes * 60,
+    )
     await redis.set(f"refresh_token:{user.id}", refresh_token, ex=settings.refresh_token_expire_days * 86400)
     await release_lock(lock_key, lock_token)
     return GenericResponse(data=LoginResponse(access_token=access_token, refresh_token=refresh_token))
@@ -56,10 +63,24 @@ async def refresh(request: RefreshTokenRequest, db: Session = Depends(get_db)):
     user = db.get(User, user_id)
     if user is None or not user.is_active:
         raise HTTPException(401, "User invalid")
-    access_token = create_access_token(user.username, user.id)
-    await redis.set(f"access_token:{user.id}", access_token, ex=settings.access_token_expire_minutes * 60)
+    session_id = payload.get("sid") or secrets.token_urlsafe(32)
+    access_token = create_access_token(user.username, user.id, session_id)
+    refresh_token = request.refresh_token
+    if payload.get("sid") is None:
+        # 首次刷新旧版 token 时迁移到带 sid 的滑动会话。
+        refresh_token = create_refresh_token(user.username, user.id, session_id)
+        await redis.set(
+            f"refresh_token:{user.id}",
+            refresh_token,
+            ex=settings.refresh_token_expire_days * 86400,
+        )
+    await redis.set(
+        f"access_token:{user.id}",
+        session_id,
+        ex=settings.access_token_expire_minutes * 60,
+    )
     return GenericResponse(
-        data=LoginResponse(access_token=access_token, refresh_token=request.refresh_token)
+        data=LoginResponse(access_token=access_token, refresh_token=refresh_token)
     )
 
 

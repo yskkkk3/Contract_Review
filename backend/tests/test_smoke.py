@@ -1,5 +1,7 @@
 """API smoke tests: auth -> session -> file -> admin -> dashboard."""
 
+from app.core.security import TOKEN_TYPE_ACCESS, decode_token
+
 
 def test_health(client):
     resp = client.get("/health")
@@ -20,6 +22,58 @@ def test_register_login_me(client):
     r = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200
     assert r.json()["data"]["username"] == "alice"
+
+
+def test_authenticated_request_slides_access_token_by_thirty_minutes(client):
+    client.post("/api/users", json={"username": "sliding", "password": "secret123"})
+    login = client.post(
+        "/api/auth/login",
+        json={"identifier": "sliding", "password": "secret123"},
+    )
+    token = login.json()["data"]["access_token"]
+    original_payload = decode_token(token, TOKEN_TYPE_ACCESS)
+
+    response = client.get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    renewed_token = response.headers["x-access-token"]
+    renewed_payload = decode_token(renewed_token, TOKEN_TYPE_ACCESS)
+    assert renewed_payload["sid"] == original_payload["sid"]
+    assert renewed_payload["user_id"] == original_payload["user_id"]
+    assert renewed_payload["exp"] - renewed_payload["iat"] == 30 * 60
+
+    # 同一会话的旧 token 在其自身过期前仍可用于并发请求，不会被续期互踢。
+    concurrent_response = client.get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert concurrent_response.status_code == 200
+
+
+def test_new_login_revokes_previous_sliding_session(client):
+    client.post("/api/users", json={"username": "single-session", "password": "secret123"})
+    first = client.post(
+        "/api/auth/login",
+        json={"identifier": "single-session", "password": "secret123"},
+    )
+    first_token = first.json()["data"]["access_token"]
+    second = client.post(
+        "/api/auth/login",
+        json={"identifier": "single-session", "password": "secret123"},
+    )
+    second_token = second.json()["data"]["access_token"]
+
+    assert client.get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {first_token}"},
+    ).status_code == 401
+    assert client.get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {second_token}"},
+    ).status_code == 200
 
 
 def test_bad_login(client):

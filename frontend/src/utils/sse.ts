@@ -41,6 +41,8 @@ export function openSse({ url, kind, token, body, onEvent, signal }: SseOptions)
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
       })
+      const renewedToken = resp.headers.get('x-access-token')
+      if (renewedToken) localStorage.setItem('contract_review_token', renewedToken)
       if (!resp.ok || !resp.body) {
         let message = `SSE 连接失败: ${resp.status}`
         try {

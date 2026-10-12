@@ -43,7 +43,13 @@ def verify_password(plain: str, stored: str) -> bool:
         return False
 
 
-def _create_token(sub: str, user_id: int, token_type: str, expires_delta: timedelta) -> str:
+def _create_token(
+    sub: str,
+    user_id: int,
+    token_type: str,
+    expires_delta: timedelta,
+    session_id: str | None = None,
+) -> str:
     now = datetime.now(UTC)
     payload = {
         "sub": sub,
@@ -52,20 +58,24 @@ def _create_token(sub: str, user_id: int, token_type: str, expires_delta: timede
         "iat": now,
         "exp": now + expires_delta,
     }
+    if session_id:
+        payload["sid"] = session_id
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
-def create_access_token(sub: str, user_id: int) -> str:
+def create_access_token(sub: str, user_id: int, session_id: str | None = None) -> str:
     return _create_token(
         sub, user_id, TOKEN_TYPE_ACCESS,
         timedelta(minutes=settings.access_token_expire_minutes),
+        session_id,
     )
 
 
-def create_refresh_token(sub: str, user_id: int) -> str:
+def create_refresh_token(sub: str, user_id: int, session_id: str | None = None) -> str:
     return _create_token(
         sub, user_id, TOKEN_TYPE_REFRESH,
         timedelta(days=settings.refresh_token_expire_days),
+        session_id,
     )
 
 
@@ -81,13 +91,38 @@ def decode_token(token: str, expected_type: str | None = None) -> dict:
     return payload
 
 
-async def _is_revoked(user_id: int, token: str) -> bool:
+async def _is_revoked(user_id: int, token: str, session_id: str | None = None) -> bool:
     """Redis 校验：登出后 token 被吊销，返回 True。"""
     redis = get_redis()
     stored = await redis.get(f"access_token:{user_id}")
     if stored is None:
         return True
-    return stored != token
+    return stored != (session_id or token)
+
+
+async def renew_access_token(payload: dict, token: str) -> str | None:
+    """校验会话仍有效后，将 Access Token 的有效期滑动延长一个完整周期。"""
+    user_id = payload.get("user_id")
+    subject = payload.get("sub")
+    session_id = payload.get("sid")
+    if user_id is None or not subject:
+        return None
+
+    redis = get_redis()
+    key = f"access_token:{user_id}"
+    stored = await redis.get(key)
+    if session_id is None:
+        # 已登录用户的旧版 token 在第一次活动时自动迁移，无需重新登录。
+        if stored != token:
+            return None
+        session_id = secrets.token_urlsafe(32)
+        await redis.set(key, session_id, ex=settings.access_token_expire_minutes * 60)
+        return create_access_token(subject, user_id, session_id)
+    if stored != session_id:
+        return None
+    if not await redis.expire(key, settings.access_token_expire_minutes * 60):
+        return None
+    return create_access_token(subject, user_id, session_id)
 
 
 async def get_current_user(
@@ -100,7 +135,7 @@ async def get_current_user(
     user_id = payload.get("user_id")
     if user_id is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token payload")
-    if await _is_revoked(user_id, credentials.credentials):
+    if await _is_revoked(user_id, credentials.credentials, payload.get("sid")):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token revoked")
     user = db.get(User, user_id)
     if user is None or not user.is_active:

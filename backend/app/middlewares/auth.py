@@ -5,7 +5,9 @@
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.core.security import TOKEN_TYPE_ACCESS, decode_token
+from app.core.security import TOKEN_TYPE_ACCESS, decode_token, renew_access_token
+
+RENEWED_ACCESS_TOKEN_HEADER = "X-Access-Token"
 
 # 无需登录的公开路径（前缀匹配）
 PUBLIC_PATHS = (
@@ -36,4 +38,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
             # 携带了 token 但无效/过期：全局拦截（与路由 Depends 双层校验）
             return Response(status_code=401, content='{"code":401,"msg":"Invalid or expired token"}', media_type="application/json")
         request.state.user_id = payload.get("user_id")
-        return await call_next(request)
+        response = await call_next(request)
+        if response.status_code != 401:
+            renewed_token = await renew_access_token(payload, auth[7:])
+            if renewed_token:
+                response.headers[RENEWED_ACCESS_TOKEN_HEADER] = renewed_token
+        return response

@@ -5,6 +5,16 @@ import type { GenericResponse } from '@/types/api'
 
 export const TOKEN_KEY = 'contract_review_token'
 
+function persistRenewedToken(headers?: Record<string, unknown>) {
+  const token = headers?.['x-access-token']
+  if (typeof token !== 'string' || !token) return
+  localStorage.setItem(TOKEN_KEY, token)
+  void import('@/stores/auth').then(({ useAuthStore }) => {
+    const auth = useAuthStore()
+    if (auth.token) auth.token = token
+  })
+}
+
 const http = axios.create({
   baseURL: import.meta.env.VITE_API_BASE || '/api',
   timeout: 120000,
@@ -18,6 +28,7 @@ http.interceptors.request.use((config) => {
 
 http.interceptors.response.use(
   (resp) => {
+    persistRenewedToken(resp.headers)
     const body = resp.data as GenericResponse
     if (body && typeof body.code === 'number' && body.code !== 200) {
       ElMessage.error(body.msg || '请求失败')
@@ -26,6 +37,7 @@ http.interceptors.response.use(
     return resp
   },
   async (error) => {
+    persistRenewedToken(error.response?.headers)
     if (error.response?.status === 401) {
       const { useAuthStore } = await import('@/stores/auth')
       useAuthStore().logout()
