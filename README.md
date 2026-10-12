@@ -1,140 +1,290 @@
-# 高校合同智能审阅系统（Contract Review Agent）
+# Contract Review · 采购合同智能审阅平台
 
 [![CI](https://github.com/yskkkk3/Contract_Review/actions/workflows/ci.yml/badge.svg)](https://github.com/yskkkk3/Contract_Review/actions/workflows/ci.yml)
-[![Author](https://img.shields.io/badge/author-yskkkk3-blue)](https://github.com/yskkkk3)
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![Vue](https://img.shields.io/badge/Vue-3-42B883?logo=vuedotjs&logoColor=white)
+![LangGraph](https://img.shields.io/badge/Agent-LangGraph-155E75)
 
-**作者：[@yskkkk3](https://github.com/yskkkk3)**
+**把合同原文、风险判断和修改建议放进同一个工作流。**
 
-基于 **LangGraph Multi-Agent + 混合检索 RAG** 的高校合同智能审阅系统。面向高校采购场景（以深圳大学采购管理制度为知识底座）：上传合同 → Agent 并行审阅 6 个风险维度 → SSE 实时推送风险点与证据 → 支持合同比对 / 合同问答 / 看板统计。配套 Docker Compose 一键部署、GitHub Actions CI、Langfuse 可观测与 Locust 压测。
+Contract Review 面向高校采购合同场景，将文档解析、分工审阅、知识检索与人工确认连接起来。用户可以上传合同、设置审阅立场与强度，查看逐步返回的风险分析，也可以对照两份合同的变化，或围绕合同内容继续提问。
 
-## 架构
+当前版本采用 **DeepSeek 推理 + 阿里云百炼向量化 / 重排 / 可选 OCR** 的组合，业务数据存入 MySQL，文件可保存在本地或阿里云 OSS。模型、存储和解析引擎均通过配置切换。
 
-<p align="center">
-  <img src="docs/architecture.svg" alt="系统架构图" width="100%">
-</p>
+[开始运行](#本地运行) · [审阅如何工作](#审阅如何工作) · [配置说明](#按能力配置服务) · [开发文档](#继续阅读)
 
-- **Agent 编排（LangGraph）**：意图识别（LLM + 规则降级）→ 条款分发 → 6 个风险维度专家并行审阅（ReAct + RAG 工具）→ Gate 质检 → 仲裁汇总；提示词模板独立管理。
-- **RAG 工程**：百炼 text-embedding-v4 稠密向量（Qdrant）+ BM25 稀疏双路召回 → RRF 融合 → qwen3-rerank 精排；知识分层（制度 / 法规 / 模板），证据可追溯；内置检索指标与 RAGAS 测评。
-- **后端工程**：FastAPI + SQLAlchemy 2 + Pydantic v2 + JWT + SSE 流式；统一响应与异常；PBKDF2 密码；CI（ruff + pytest + 前端构建 + 镜像）。
-- **可观测与压测**：Langfuse 自托管 trace 关联；Locust 全链路压测（SSE TTFT / 完整时长 / 成功率）。
+## 从一份合同开始
 
-> 架构图采用"展示 / 应用 / Agent 编排 / RAG 检索 / 基础设施"五层分层；详细版流程图与数据库 E-R 图见 [`docs/DESIGN.md`](docs/DESIGN.md)。
-
-## 核心功能
-
-| 模块 | 能力 |
-|---|---|
-| 合同审阅 | 6 风险维度并行审阅（主体合规 / 财务付款 / 知识产权 / 违约责任 / 验收质保 / 争议管辖），SSE 实时推送，证据引用制度条款 |
-| 合同比对 | 上传两份合同逐条比对差异 |
-| 合同问答 | 基于合同文本与知识库的流式问答 |
-| 看板统计 | 风险分布、维度命中率、审阅耗时趋势（ECharts） |
-| 知识库 | 高校采购制度 + 法规 + 合同模板三层语料，自动 ingest |
-| 管理配置 | 合同类型 / 专家提示词 / 模型参数在线配置 |
-| 依赖策略 | 仅用官方独立包：langgraph / langchain-core / langchain-openai + 原生 openai SDK；**主环境不含 langchain-community** |
-| 多引擎解析 | pdfplumber→PyMuPDF→pypdf→docx→LibreOffice→OCR→DeepSeek OCR→Docling/MinerU 有序回退链（引擎可配置） |
-| 中间件 / 缓存 | 全局鉴权 + 请求日志 + Redis 限流中间件；Redis 缓存（token/对话历史）+ 分布式锁（登录/审阅并发） |
-| MCP / 规则引擎 | MCP Server（2.x）暴露检索/问答工具（stdio + SSE）；6 维度确定性规则 Skills（LLM+规则双引擎） |
-| RAGAS 评估 | `uv sync --extra eval`（ragas **0.4.3** + langchain-community<0.4）；ragas 依赖 community 的 vertexai 模块（0.4 已移除），eval 环境锁 <0.4 解决 |
-
-
-## 技术栈
-
-| 层 | 技术 |
-|---|---|
-| Agent 编排 | LangGraph（状态机 · 条件路由 · 节点并行）、LangChain Core/OpenAI、提示词模板独立 .md |
-| RAG | Qdrant + 百炼 text-embedding-v4（1024 维）、BM25 + jieba（稀疏）、RRF 融合、qwen3-rerank 精排 |
-| LLM | OpenAI SDK 分别接入 DeepSeek 官方推理与阿里云百炼：deepseek-v4-pro（审阅）、deepseek-flash（意图/聊天） |
-| 后端 | FastAPI · SQLAlchemy 2 · Pydantic v2 · JWT(PBKDF2) · SSE · Langfuse · 多引擎文档解析 · Redis 中间件/锁 · MCP · 规则 Skills |
-| 前端 | Vue3 + TypeScript + Vite + Element Plus + Pinia + ECharts |
-| 工程化 | Docker Compose（六服务）· GitHub Actions（5 Job）· Locust · uv |
-
-## 快速开始
-
-```bash
-make up       # Docker 一键启动（需先配置根目录 .env）
-make ingest   # 构建知识库
-make test     # 后端测试
-make help     # 查看全部命令（含本地开发/测评/压测）
+```mermaid
+flowchart LR
+    A["上传 PDF / Word"] --> B["提取正文与合同信息"]
+    B --> C["选择立场、强度与合同类型"]
+    C --> D["Agent 分工审阅"]
+    D --> E["查看风险与修改建议"]
+    E --> F["人工确认与采纳"]
+    B --> G["围绕合同提问"]
+    H["两份 DOCX"] --> I["段落与字符差异比对"]
 ```
 
-```bash
-# 1. 配置密钥（.env 统一放项目根目录）
-cp backend/.env.example .env
-vim .env
-# 填写 LLM_API_KEY（DeepSeek）；
-# 将百炼 Key 分别填入 EMBEDDING_API_KEY 和 RERANK_API_KEY。
-# 三类模型使用独立客户端，后续可以分别更换供应商。
+| 工作入口 | 可以完成的事情 |
+| --- | --- |
+| 合同管理 | 上传 PDF、DOCX、DOC，解析正文并提取甲乙方、金额；查看、下载和删除文件 |
+| 智能审阅 | 根据合同类型、审阅立场和强度生成风险点，展示原文摘录、风险等级、分析和建议文本，记录采纳状态 |
+| 合同比对 | 对两份 DOCX 做段落对齐和字符级差异展示，识别新增、删除与替换 |
+| 智能问答 | 将合同正文节选与会话历史作为上下文，流式回答后续问题 |
+| 工作台 | 查看合同审阅概况、审阅趋势和修改采纳统计 |
+| 系统配置 | 管理合同类型、专家提示词和模型参数 |
+| 账户与界面 | 注册登录、用户头像上传与重置；统一的设计变量、组件和响应式导航 |
 
-# 2. 一键起全套（mysql/redis/qdrant/langfuse/backend/frontend）
-docker compose -f deploy/docker-compose.yml up -d --build
+头像支持本地或 OSS 存储，上传上限为 **5 MB**，经图片校验后统一处理为 WebP。前端另提供 `/design-system.html`，用于查看设计系统与交互示例。
 
-# 3. 构建知识库（深大制度 + 法规 + 模板 → Qdrant + BM25）
-docker compose -f deploy/docker-compose.yml exec backend python scripts/ingest_kb.py
+## 审阅如何工作
 
-# 4. 打开前端 http://localhost（注册账号后上传合同并审阅）
+审阅任务在 LangGraph 状态机中经过分发、分析、校验和汇总。专家任务按照“条款 × 风险维度”展开，并受并发上限控制。
+
+```mermaid
+flowchart TD
+    A["合同正文切分"] --> B["意图判断"]
+    B -->|"进入审阅"| C["条款路由"]
+    B -->|"其他意图"| H["仲裁汇总"]
+    C --> D["并发专家任务"]
+    D --> E["按需调用工具"]
+    E --> F["结构化风险结果"]
+    F --> G["Gate 字段校验与质量检查"]
+    G --> H
+    H --> I["保存结果与输出总结"]
+    J["制度 / 法规 / 模板检索"] --> E
+    K["原文定位 / 违约金计算"] --> E
 ```
 
-> 完整启动 / 测试 / 压测 / 故障排查见 [`docs/QUICKSTART.md`](docs/QUICKSTART.md)。
+六类审阅视角分别覆盖：
 
-## 文档导航
+| 维度 | 关注的问题举例 |
+| --- | --- |
+| 主体资格与合规 | 签约主体、供应商资格、采购程序 |
+| 财务与付款 | 付款前提、支付节点、保证金安排 |
+| 知识产权与保密 | 成果归属、使用权限、保密义务 |
+| 违约责任与解除 | 责任分配、逾期处理、解约条件 |
+| 验收交付与质保 | 交付标准、验收程序、售后责任 |
+| 争议解决与管辖 | 争议处理路径、管辖约定 |
 
-| 文档 | 内容 |
-|---|---|
-| [`AGENTS.md`](AGENTS.md) | AI Agent（Codex / Claude Code 等）接手改代码的仓库指南：结构、命令、硬性约束、陷阱清单 |
-| [`docs/DESIGN.md`](docs/DESIGN.md) | 详细设计：总体架构、Agent 状态机、RAG 检索链路、数据库设计与 E-R 图、Docker 编排、CI 流水线 |
-| [`docs/QUICKSTART.md`](docs/QUICKSTART.md) | 启动与测试指南：Docker 一键 / 本地开发 / 测试矩阵 / 压测 / 常见问题 |
-| [`docs/benchmark.md`](docs/benchmark.md) | 性能压测报告（Locust：TTFT / 完整时长 / 成功率，待环境跑完回填） |
-| [`docs/rag-eval.md`](docs/rag-eval.md) | RAG 测评报告（Recall@K / MRR / NDCG / RAGAS，golden set 58 条） |
+专家可以调用四个工具：**知识查证、条款原文读取、违约金试算、模板查询**。计算由确定性代码执行，检索结果回传给模型；工具循环设置轮次上限与结果长度限制，异常也会回传给模型处理。提示词保存在独立 Markdown 文件中，便于调整审阅策略。
 
-## 本地开发
+模型输出经过字段归一化和 Gate 校验，再进入仲裁汇总。SSE 通道先返回任务信息，随后推送专家分析与最终总结，前端可以逐步展示处理结果。
 
-```bash
-# 后端（Python 3.12 + uv；.env 回退读取项目根目录）
-cd backend && uv sync
-uv run uvicorn app.main:app --reload --port 8080   # http://localhost:8080/docs
+## 让判断有据可查
 
-# 前端（Node 22）
-cd frontend && npm install
-npm run dev                                        # http://localhost:5173，/api 代理到 8080
+审阅知识库分为校内采购制度、采购相关法规和合同模板三层，仓库目前包含 **52 篇文本语料**。
+
+```mermaid
+flowchart LR
+    A["检索问题"] --> B["可选查询改写"]
+    B --> C["三层知识库"]
+    C --> D["Qdrant 向量召回"]
+    C --> E["BM25 关键词召回"]
+    D --> F["RRF 融合"]
+    E --> F
+    F --> G["候选去重与每文档配额"]
+    G --> H["Rerank 精排"]
+    H --> I["文档去重与证据上下文"]
 ```
 
-## 目录结构
+- 向量召回负责语义匹配，BM25 保留术语和关键词匹配能力。
+- 每篇文档进入精排的片段数量受限，最终结果再按文档去重，减少单一材料占满结果列表的情况。
+- `ingest_kb.py` 同时构建 Qdrant 向量索引与 BM25 索引；更换向量模型或维度后需要重建。
+- 内置 **100 条 Golden Set**，支持检索指标检查；RAGAS 生成质量评估和真实模型冒烟测试单独运行。
 
+测评与压测报告保留各自的测试条件。更换模型、语料或部署环境后，应重新测量，历史结果不作为当前配置的性能承诺。
+
+## 系统组成
+
+| 部分 | 实现与职责 |
+| --- | --- |
+| Web 应用 | Vue 3、TypeScript、Vite、Element Plus、Pinia、ECharts |
+| API 与数据 | FastAPI、Pydantic v2、SQLAlchemy 2、MySQL、JWT |
+| Agent | LangGraph 状态编排、专家任务、工具调用、输出校验、规则降级 |
+| 检索 | Qdrant、BM25、jieba、RRF、查询改写、Rerank |
+| 模型接入 | 推理与 Embedding 使用 OpenAI SDK；Rerank 使用兼容 HTTP 接口 |
+| 文档与文件 | PDF / Word 多引擎解析、可选千问 OCR、本地存储 / 阿里云 OSS |
+| 运行支撑 | Redis 缓存与锁、请求日志、延迟指标、可选 Langfuse、MCP 工具入口 |
+| 开发交付 | uv、npm、pytest、Ruff、Docker Compose、GitHub Actions |
+
+推理、向量化、精排和 OCR 的配置相互独立。当前模板使用 `text-embedding-v4`（1024 维）、`qwen3-rerank` 和 `qwen3.5-ocr`；审阅、聊天、意图识别分别配置模型名称。
+
+## 本地运行
+
+推荐 **Python 3.12 + uv + Node.js 22 + MySQL + Redis + Qdrant**。以下命令在项目根目录的 PowerShell 中开始执行。
+
+### 1. 获取代码与依赖
+
+```powershell
+git clone https://github.com/yskkkk3/Contract_Review.git
+cd Contract_Review
+Copy-Item backend/.env.example .env
+
+cd backend
+uv sync --frozen
+cd ../frontend
+npm ci
+cd ..
 ```
-backend/
-  app/agent/       LangGraph 状态机、节点（意图/分发/专家/质检/仲裁）、提示词模板
-  app/rag/         ingest（chunker/crawler/loader）、retrievers（hybrid/BM25）、rerank、eval
-  app/api/         FastAPI 路由（auth/contracts/sessions/reviews/comparisons/chats/admin/dashboard）
-  app/services/    审阅编排（SSE）、聊天（SSE）、多引擎文档解析
-  app/middlewares/ 全局鉴权 / 请求日志 / Redis 限流
-  app/mcp/         MCP Server（2.x）/ Client
-  app/skills/      6 维度确定性规则引擎
-  app/core/        Redis 缓存 + 分布式锁（cache.py）
-  scripts/         ingest_kb.py（知识库构建）、eval_rag.py（RAG 测评）、bench_locust.py（压测）
-frontend/          Vue3 + TS + Vite + Element Plus + Pinia + ECharts
-deploy/            docker-compose（六服务）
-.github/workflows/ CI（lint → test → 前端构建 → 镜像 → 部署占位）
-docs/              架构图、设计文档、压测/测评报告
+
+### 2. 填写根目录配置
+
+编辑 `.env`，填写数据库、Redis、Qdrant 和模型凭据。模板中的 `mysql`、`redis`、`qdrant` 是容器服务名；本机启动时需要改成实际可访问的主机地址。
+
+下面是本地服务的配置示例，密钥另行填写：
+
+```dotenv
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_DB=contract_review
+DATABASE_URL=
+
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+REDIS_FAKE=false
+
+QDRANT_HOST=127.0.0.1
+QDRANT_PORT=6333
+QDRANT_LOCATION=
+
+STORAGE_BACKEND=local
+UPLOAD_DIR=./data/uploads
+OSS_BUCKET_DIR=./data/parsed
 ```
 
-## 测试与验证
+先创建 MySQL 数据库，并填写对应的 `MYSQL_USER`、`MYSQL_PASSWORD`。运行时工作目录为 `backend/`，上面的相对存储路径也据此解析。`DATABASE_URL` 留空时使用 `MYSQL_*` 配置；JWT 密钥使用自行生成的随机字符串。
 
-| 层 | 命令 | 覆盖 |
+### 3. 构建知识库
+
+确认 Qdrant 可访问，且 Embedding 凭据已填写：
+
+```powershell
+cd backend
+uv run python scripts/ingest_kb.py
+```
+
+此步骤会调用向量模型，将语料写入 Qdrant，并在本地生成 `kb_bm25.pkl`。生成的索引不随源码提交，首次部署需要自行构建。
+
+### 4. 启动前后端
+
+打开两个终端：
+
+```powershell
+# 终端一：后端，工作目录 backend/
+uv run python run_dev.py
+```
+
+```powershell
+# 终端二：前端，工作目录 frontend/
+npm run dev
+```
+
+| 地址 | 用途 |
+| --- | --- |
+| `http://localhost:5173` | 应用入口 |
+| `http://127.0.0.1:8080/docs` | API 文档 |
+| `http://127.0.0.1:8080/health` | 后端健康检查 |
+| `http://localhost:5173/design-system.html` | 设计系统示例 |
+
+### 在 PyCharm / IDEA 中运行
+
+将 Python 解释器设为 `backend/.venv/Scripts/python.exe`，后端脚本选 `backend/run_dev.py`，工作目录设为 `backend/`；前端使用 `frontend/package.json` 中的 `dev` 脚本。
+
+仓库的 `.run/` 包含 `Backend (FastAPI)`、`Frontend (Vue)` 和 `Full Stack` 配置。首次导入时检查 Python 与 Node.js 的本机路径；组合启动需要 IDE 支持相应的运行配置。
+
+Qdrant 部署在远端且只监听回环地址时，可以先建立 SSH 隧道，再启动应用：
+
+```powershell
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:6333:127.0.0.1:6333 <ssh-user>@<vm-host>
+```
+
+隧道保持运行，应用的 `QDRANT_HOST` 设置为 `127.0.0.1`。已有的 `Qdrant SSH Tunnel` 配置需按自己的环境调整连接地址。
+
+## 按能力配置服务
+
+| 能力 | 关键配置 | 使用说明 |
 | --- | --- | --- |
-| 单测/集成 | `make test` | 鉴权/会话/合同/审阅 SSE/聊天 SSE/Agent 纯逻辑/RAG 纯函数 |
-| Lint | `make lint` | ruff（E/F/I/W/UP/B/SIM） |
-| 前端 | `make frontend-build` | vue-tsc 类型检查 + Vite 构建 |
-| 端到端 | `make smoke` | 真实 LLM + Qdrant 验证 Agent+RAG 全链路 |
-| RAG 测评 | `make eval-rag` | 检索指标 + RAGAS（golden set 58 条） |
-| 压测 | `make bench` | Locust 全链路（SSE TTFT / 成功率） |
+| 审阅与问答 | `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_REVIEW_MODEL`、`LLM_CHAT_MODEL`、`LLM_INTENT_MODEL` | 默认接入 DeepSeek，模型名按账户可用型号填写 |
+| 向量索引 | `EMBEDDING_BASE_URL`、`EMBEDDING_API_KEY`、`EMBEDDING_MODEL`、`EMBEDDING_DIMENSIONS` | 模型维度应与 Qdrant 集合一致 |
+| 检索精排 | `RERANK_URL`、`RERANK_API_KEY`、`RERANK_MODEL` | URL 填写完整重排接口地址 |
+| 云端 OCR | `OCR_BASE_URL`、`OCR_API_KEY`、`OCR_MODEL`、`OCR_MAX_PAGES` | 在 `DOC_PARSER_ENGINES` 中显式加入 `cloud_ocr`；Key 留空时可复用百炼 `EMBEDDING_API_KEY` |
+| OSS 文件存储 | `STORAGE_BACKEND=oss`、`OSS_ENDPOINT`、`OSS_BUCKET_NAME`、`OSS_ACCESS_KEY_ID`、`OSS_ACCESS_KEY_SECRET` | Endpoint 按 Bucket 所在地域填写；原始文件、解析文本与头像经统一存储层读写 |
+| 观测与外部工具 | `LANGFUSE_*`、`MCP_ENABLED`、`MCP_SERVER_URLS` | 按需配置，日常本地启动可先不启用 |
 
-## 简历亮点（Agent 项目）
+云端 OCR 会将待识别页面发送至模型服务；只有在接受这种处理方式时才启用。DOC 转换依赖 LibreOffice，本地 OCR 依赖 Tesseract 及相关 PDF 工具；未安装这些组件时，按实际环境调整解析引擎列表。
 
-1. **Multi-Agent 编排**：LangGraph 状态机（意图识别 → 分发 → 6 专家并行 → 质检 → 仲裁），提示词模板化 + JSON Schema 约束 + 规则降级兜底，专家并行（信号量限流 20）。
-2. **RAG 全链路**：混合检索（dense + sparse → RRF → cross-encoder 重排）、知识分层、证据可追溯、检索指标（Recall@K / MRR / NDCG）+ RAGAS 四指标测评。
-3. **工程化**：FastAPI 分层、SSE 流式（真流式 TTFT 37s）、统一异常、Redis 缓存+分布式锁、多引擎文档解析、MCP 接入、CI 五阶段、Docker Compose 六服务、Langfuse 可观测、Locust 压测指标。
-4. **评测闭环**：golden set 58 条检索指标 + RAGAS 0.4.3 四指标测评（LLM-as-judge），LLM 供应商经 OpenAI SDK 抽象可随时切换。
+所有真实凭据只保存在本地 `.env`，该文件已被 Git 忽略。公开示例仅用于说明配置结构。
 
-## 作者
+## 容器运行
 
-本项目由 [yskkkk3](https://github.com/yskkkk3) 独立设计与开发。
+配置好根目录 `.env` 后：
+
+```bash
+docker compose -f deploy/docker-compose.yml up -d --build
+docker compose -f deploy/docker-compose.yml exec backend python scripts/ingest_kb.py
+```
+
+Compose 编排 MySQL、Redis、Qdrant、后端、前端，以及 Langfuse 和其 PostgreSQL 数据库。前端入口为 `http://localhost`，Langfuse 入口为 `http://localhost:13000`。
+
+这是本地联调部署配置；其中的示例数据库口令、JWT 和 Langfuse 参数应在部署到自己的环境前配置好。CI 中的部署步骤目前为占位入口。
+
+## 开发与验证
+
+后端依赖由 `pyproject.toml` 和 `uv.lock` 管理，新增依赖使用 `uv add`；前端使用 npm 与 `package-lock.json`。
+
+```powershell
+# 工作目录 backend/
+uv run ruff check app tests scripts
+uv run pytest tests -q
+uv run python scripts/check_golden.py
+
+# 工作目录 frontend/
+npm run build
+```
+
+常规测试通过 mock 模型与测试存储运行，不需要真实 API Key。GitHub Actions 执行后端规范检查、测试、前端构建、镜像构建与 Golden Set 静态门禁；完整检索指标门禁按工作流中的 Secret 条件启用。
+
+真实服务验证按需单独执行：
+
+```powershell
+# 工作目录 backend/；需要相应模型凭据与服务
+uv run python scripts/smoke_agent.py
+uv run --extra eval python scripts/eval_rag.py
+uv run --extra eval python scripts/eval_ragas.py --cases 10
+```
+
+`make` 可用的环境也可以通过根目录 Makefile 执行这些任务。
+
+## 代码从哪里看
+
+```text
+backend/
+  app/agent/       状态机、专家节点、工具、提示词与规则降级
+  app/rag/         知识库构建、混合检索、重排与评测
+  app/api/         账户、合同、会话、审阅、比对与管理接口
+  app/services/    文档解析、审阅流、对话流与头像处理
+  app/core/        配置、数据库、Redis、Qdrant、存储与指标
+  app/mcp/         对外工具服务与客户端入口
+  tests/           单元测试与接口测试
+  scripts/         知识库、质量门禁、冒烟与压测命令
+frontend/
+  src/views/       工作台、合同、审阅、比对、问答与配置页面
+  src/components/  业务组件、应用导航与基础 UI 组件
+  src/styles/      设计变量、排版与全局样式
+.run/              JetBrains IDE 运行配置
+deploy/            Compose 部署配置
+docs/              设计、运行指南、评测与压测记录
+```
+
+## 继续阅读
+
+- [设计说明](docs/DESIGN.md)：系统分层、Agent 编排与数据结构。
+- [运行指南](docs/QUICKSTART.md)：环境准备、常用命令与排查步骤。
+- [检索评测记录](docs/rag-eval.md)：指标口径、语料标注与评测方法。
+- [性能测试记录](docs/benchmark.md)：测试场景与延迟指标。
+- [工具与流式设计](docs/design-tool-calling-and-ttft.md)：工具调用与首 Token 计时。
+- [仓库协作指南](AGENTS.md)：修改代码时的约定。
+
+维护：[yskkkk3](https://github.com/yskkkk3)
