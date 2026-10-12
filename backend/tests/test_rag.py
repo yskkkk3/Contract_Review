@@ -96,3 +96,27 @@ def evaluate_aggregate(cases):
     from app.rag.eval.retrieval_metrics import evaluate_retrieval
 
     return evaluate_retrieval(cases, k=5)
+
+
+async def test_rerank_keeps_document_identity_for_identical_passages(monkeypatch):
+    from app.rag import rerank
+    from app.rag.retrievers.hybrid import RetrievedChunk
+
+    sent = []
+
+    class FakeClient:
+        async def rerank(self, query, documents, top_n):
+            sent.extend(documents)
+            return [{"index": 1, "relevance_score": 0.9}, {"index": 0, "relevance_score": 0.1}]
+
+    monkeypatch.setattr(rerank, "get_sf_client", FakeClient)
+    candidates = [
+        RetrievedChunk(Chunk("合同付款期限应明确", "国家付款规则", "source-a", "regulation", "第九条"), 0.2),
+        RetrievedChunk(Chunk("合同付款期限应明确", "学校付款制度", "source-b", "institution", "第三条"), 0.1),
+    ]
+    ranked = await rerank.rerank_chunks("学校采购付款", candidates, top_k=2)
+    assert len(set(sent)) == 2
+    assert all(candidate.chunk.doc_id in passage and candidate.chunk.text in passage
+               for candidate, passage in zip(candidates, sent, strict=True))
+    assert [item.chunk.doc_id for item in ranked] == ["学校付款制度", "国家付款规则"]
+    assert ranked[0].score == 0.9

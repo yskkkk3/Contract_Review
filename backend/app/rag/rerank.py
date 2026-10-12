@@ -18,7 +18,11 @@ async def rerank_chunks(
     if len(candidates) <= 1:
         return candidates[:top_k]
 
-    documents = [c.chunk.text for c in candidates]
+    # 条文离开标题后容易混淆国家/地方规则；将文档身份与章节一并交给精排。
+    documents = [
+        f"文档：{c.chunk.doc_id}\n章节：{c.chunk.section or '未标注'}\n{c.chunk.text}"
+        for c in candidates
+    ]
     results = await get_sf_client().rerank(query, documents, top_n=min(top_k, len(candidates)))
     # SiliconFlow rerank 返回 relevance_score（OpenAI 兼容格式），兼容两种字段名；
     # 注意 r["index"] 是候选在 documents 中的下标，不能用 Python 对象 id 查映射。

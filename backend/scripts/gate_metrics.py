@@ -42,14 +42,14 @@ async def run(recall5: float, mrr: float, ndcg: float) -> int:
     await rag.close()
 
     fail = False
-    if metrics["recall@5"] < recall5:
-        print(f"[gate] FAIL: recall@5 {metrics['recall@5']:.3f} < {recall5}")
+    if metrics["recall@k"] < recall5:
+        print(f"[gate] FAIL: recall@5 {metrics['recall@k']:.3f} < {recall5}")
         fail = True
     if metrics["mrr"] < mrr:
         print(f"[gate] FAIL: mrr {metrics['mrr']:.3f} < {mrr}")
         fail = True
-    if metrics["ndcg@5"] < ndcg:
-        print(f"[gate] FAIL: ndcg@5 {metrics['ndcg@5']:.3f} < {ndcg}")
+    if metrics["ndcg@k"] < ndcg:
+        print(f"[gate] FAIL: ndcg@5 {metrics['ndcg@k']:.3f} < {ndcg}")
         fail = True
     if not fail:
         print("[gate] 检索指标达标（Recall@5 / MRR / NDCG@5）")
