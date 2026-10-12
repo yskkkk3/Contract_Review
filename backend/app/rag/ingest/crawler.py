@@ -6,10 +6,11 @@
 - template: 样例合同条款模板（自建演示语料）
 """
 import re
-from pathlib import Path
 
 import httpx
 from bs4 import BeautifulSoup
+
+from app.rag.ingest.corpus import load_corpus as load_corpus
 
 # 深大公开制度页面（来源标注：深圳大学审计室 / 招投标管理中心官网）
 SZU_PAGES = [
@@ -79,14 +80,3 @@ async def crawl_szu_pages(timeout: float = 30.0) -> list[dict]:
             except Exception as exc:  # noqa: BLE001
                 print(f"[crawler] skip {page['url']}: {exc}")
     return results
-
-
-def load_corpus(data_dir: str | Path) -> list[dict]:
-    """从 data/kb 目录加载语料 JSON/纯文本（ingest 脚本用）。"""
-    data_dir = Path(data_dir)
-    docs: list[dict] = []
-    for layer, folder in [("institution", "institution"), ("regulation", "regulation"), ("template", "templates")]:
-        for path in sorted((data_dir / folder).glob("*")):
-            if path.suffix == ".txt":
-                docs.append({"title": path.stem, "source": str(path), "doc_type": layer, "text": path.read_text(encoding="utf-8")})
-    return docs

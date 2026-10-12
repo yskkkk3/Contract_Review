@@ -1,0 +1,134 @@
+{
+  "regulation/保障中小企业款项支付条例·付款期限与验收（2025修订）.txt": {
+    "source": "https://www.mee.gov.cn/zcwj/gwywj/202503/t20250325_1104643.shtml",
+    "law_name": "保障中小企业款项支付条例",
+    "legal_level": "行政法规",
+    "version": "2025年修订（国务院令第802号）",
+    "effective_date": "2025-06-01",
+    "verified_at": "2026-10-12",
+    "articles": "第2、3、9、10、14、15、17条",
+    "scope": "机关、事业单位或大型企业向中小企业采购；按订约时企业规模认定，注意付款起算方式与法定例外",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/保障中小企业款项支付条例·保证金与审计结算（2025修订）.txt": {
+    "source": "https://www.mee.gov.cn/zcwj/gwywj/202503/t20250325_1104643.shtml",
+    "law_name": "保障中小企业款项支付条例",
+    "legal_level": "行政法规",
+    "version": "2025年修订（国务院令第802号）",
+    "effective_date": "2025-06-01",
+    "verified_at": "2026-10-12",
+    "articles": "第11至13条",
+    "scope": "中小企业款项支付；审计结算条款针对机关、事业单位及国有大型企业",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/个人信息保护法·委托处理与退出删除.txt": {
+    "source": "https://www.cac.gov.cn/2021-08/20/c_1631050028355286.htm",
+    "law_name": "中华人民共和国个人信息保护法",
+    "legal_level": "法律",
+    "version": "2021年通过",
+    "effective_date": "2021-11-01",
+    "verified_at": "2026-10-12",
+    "articles": "第19、21、55、56条",
+    "scope": "学校委托软件、云服务或运维供应商处理师生个人信息；先判断双方处理角色",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/个人信息保护法·敏感信息与影响评估.txt": {
+    "source": "https://www.cac.gov.cn/2021-08/20/c_1631050028355286.htm",
+    "law_name": "中华人民共和国个人信息保护法",
+    "legal_level": "法律",
+    "version": "2021年通过",
+    "effective_date": "2021-11-01",
+    "verified_at": "2026-10-12",
+    "articles": "第13、28至31、55、56条",
+    "scope": "涉及敏感个人信息或不满14周岁未成年人信息的校园服务；核验合法处理基础",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/网络数据安全管理条例·外包处理与安全事件.txt": {
+    "source": "https://app.www.gov.cn/govdata/gov/202409/30/520076/article.html",
+    "law_name": "网络数据安全管理条例",
+    "legal_level": "行政法规",
+    "version": "2024年公布（国务院令第790号）",
+    "effective_date": "2025-01-01",
+    "verified_at": "2026-10-12",
+    "articles": "第11、12、16条",
+    "scope": "网络数据处理；第12条针对个人信息和重要数据提供、委托处理；第16条有特定服务场景",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/数据安全法·全流程安全与事件处置.txt": {
+    "source": "https://www.cac.gov.cn/2021-06/11/c_1624994566919140.htm",
+    "law_name": "中华人民共和国数据安全法",
+    "legal_level": "法律",
+    "version": "2021年通过",
+    "effective_date": "2021-09-01",
+    "verified_at": "2026-10-12",
+    "articles": "第27、29条",
+    "scope": "境内数据处理活动；重要数据的特别义务须先核实数据属性",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/著作权法·委托作品与许可转让.txt": {
+    "source": "https://www.ncac.gov.cn/xxfb/flfg/flfg_532/202103/t20210309_50530.html",
+    "law_name": "中华人民共和国著作权法",
+    "legal_level": "法律",
+    "version": "2020年修正",
+    "effective_date": "2021-06-01",
+    "verified_at": "2026-10-12",
+    "articles": "第10、19、26至29条",
+    "scope": "委托创作作品及著作权许可、转让；软件等特殊客体还需核验专门规则",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/合同编通则司法解释·违约金调整.txt": {
+    "source": "https://www.court.gov.cn/fabu/xiangqing/419382.html",
+    "law_name": "最高人民法院关于适用《中华人民共和国民法典》合同编通则若干问题的解释",
+    "legal_level": "司法解释",
+    "version": "法释〔2023〕13号",
+    "effective_date": "2023-12-05",
+    "verified_at": "2026-10-12",
+    "articles": "第64、65条",
+    "scope": "违约金调整争议；以民法典第584条损失为基础综合衡量，注意时间适用",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/仲裁法·仲裁协议与一裁终局（2025修订）.txt": {
+    "source": "https://policy.mofcom.gov.cn/claw/clawContent.shtml?id=103718",
+    "law_name": "中华人民共和国仲裁法",
+    "legal_level": "法律",
+    "version": "2025年修订",
+    "effective_date": "2026-03-01",
+    "verified_at": "2026-10-12",
+    "articles": "第10、27至30条",
+    "scope": "适用2025年修订法的仲裁事项；历史合同及涉外特别规则另行核验",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/民事诉讼法·协议管辖与实际联系（2023修正）.txt": {
+    "source": "https://www.gzhzcourt.gov.cn/upload/editor/file/2025/08/04/6388989731436328121054632.pdf",
+    "law_name": "中华人民共和国民事诉讼法",
+    "legal_level": "法律",
+    "version": "2023年修正",
+    "effective_date": "2024-01-01",
+    "verified_at": "2026-10-12",
+    "articles": "第35条",
+    "scope": "合同及其他财产权益纠纷的协议管辖；受级别和专属管辖限制",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/政府采购需求管理办法·履约验收方案.txt": {
+    "source": "https://gks.mof.gov.cn/guizhangzhidu/202105/P020210510621177265265.pdf",
+    "law_name": "政府采购需求管理办法",
+    "legal_level": "部门规范性文件",
+    "version": "财库〔2021〕22号",
+    "effective_date": "2021-07-01",
+    "verified_at": "2026-10-12",
+    "articles": "第23、24条",
+    "scope": "政府采购货物、工程和服务的需求与履约验收管理",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/政府采购促进中小企业发展管理办法·声明与分包.txt": {
+    "source": "https://gks.mof.gov.cn/guizhangzhidu/202012/P020201228514483258334.pdf",
+    "law_name": "政府采购促进中小企业发展管理办法",
+    "legal_level": "部门规范性文件",
+    "version": "财库〔2020〕46号",
+    "effective_date": "2021-01-01",
+    "verified_at": "2026-10-12",
+    "articles": "第11至13条",
+    "scope": "享受中小企业扶持政策的政府采购；不得混同款项支付条例的企业规模认定程序",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  }
+}

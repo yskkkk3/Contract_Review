@@ -94,6 +94,7 @@ class HybridRetriever:
                 source=hit.payload.get("source", ""),
                 doc_type=hit.payload.get("doc_type", ""),
                 section=hit.payload.get("section", ""),
+                meta=hit.payload.get("meta", {}),
             )
             for hit in dense_hits.points
             if hit.payload

@@ -1,6 +1,8 @@
 """Qdrant loader: write dense vectors with payload metadata (dense path of hybrid RAG)."""
 import hashlib
+import json
 from contextlib import suppress
+from uuid import UUID
 
 from qdrant_client import AsyncQdrantClient, models
 
@@ -11,8 +13,10 @@ from app.rag.ingest.chunker import Chunk
 settings = get_settings()
 
 
-def _point_id(doc_id: str, idx: int) -> str:
-    return hashlib.md5(f"{doc_id}:{idx}".encode()).hexdigest()
+def _point_id(doc_id: str, text: str, section: str = "") -> str:
+    """Stable content identity: corpus order and batch size must not create duplicate points."""
+    identity = json.dumps([doc_id, section, text], ensure_ascii=False, separators=(",", ":"))
+    return str(UUID(hex=hashlib.md5(identity.encode()).hexdigest()))
 
 
 async def ensure_collection(client: AsyncQdrantClient, collection: str, vector_size: int = 1024) -> None:
@@ -44,7 +48,7 @@ async def upsert_chunks(client: AsyncQdrantClient, collection: str, chunks: list
         vectors = await sf.embed([c.text for c in batch])
         points = [
             models.PointStruct(
-                id=_point_id(c.doc_id, idx),
+                id=_point_id(c.doc_id, c.text, c.section),
                 vector=vectors[j],
                 payload={
                     "doc_id": c.doc_id,
@@ -53,9 +57,10 @@ async def upsert_chunks(client: AsyncQdrantClient, collection: str, chunks: list
                     "doc_type": c.doc_type,
                     "section": c.section,
                     **c.meta,
+                    "meta": c.meta,
                 },
             )
-            for j, (idx, c) in enumerate(zip(range(i, i + len(batch)), batch, strict=True))
+            for j, c in enumerate(batch)
         ]
         await client.upsert(collection_name=collection, points=points)
         count += len(points)

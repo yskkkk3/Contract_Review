@@ -12,7 +12,21 @@ def build_context(evidence: list[RetrievedChunk], max_chars: int = 3000) -> str:
     used = 0
     for item in evidence:
         c: Chunk = item.chunk
-        seg = f"[{c.doc_type}] {c.section or c.source}\n{c.text}"
+        provenance = "；".join(
+            f"{label}：{c.meta[key]}"
+            for key, label in [
+                ("law_name", "文件"), ("legal_level", "层级"), ("version", "版本"),
+                ("effective_date", "施行"), ("verified_at", "来源核对日期"),
+                ("articles", "条文范围"), ("scope", "适用范围"), ("content_kind", "内容性质"),
+            ]
+            if c.meta.get(key)
+        )
+        if not provenance:
+            provenance = "自建示例，仅供起草参考" if c.doc_type == "template" else "版本及现行效力未标注，适用前需核实"
+        seg = (
+            f"[{c.doc_type}] doc_id={c.doc_id}\n来源：{c.source}\n"
+            f"章节：{c.section or '未标注'}；{provenance}\n{c.text}"
+        )
         if used + len(seg) > max_chars:
             break
         parts.append(seg)

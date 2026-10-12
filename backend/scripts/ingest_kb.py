@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.core.config import get_settings
 from app.core.qdrant import create_qdrant_client
 from app.rag.ingest.chunker import chunk_document
+from app.rag.ingest.corpus import load_corpus
 from app.rag.ingest.crawler import (
     REGULATION_SAMPLES,
     TEMPLATE_SAMPLES,
@@ -27,31 +28,8 @@ DATA_DIR = Path(__file__).resolve().parents[1] / "data" / "kb"
 
 
 def _build_docs() -> list[dict]:
-    """聚合语料：深大制度（网络采集）+ 法规样例 + 模板样例。"""
-    docs: list[dict] = []
-    # 本地样例（已入库的 .txt 覆盖网络采集，便于离线可重复）
-    for folder, doc_type in [
-        ("institution", "institution"),
-        ("regulation", "regulation"),
-        ("templates", "template"),
-    ]:
-        for path in sorted((DATA_DIR / folder).glob("*.txt")):
-            docs.append(
-                {
-                    "title": path.stem,
-                    "source": f"file://{path}",
-                    "doc_type": doc_type,
-                    "text": path.read_text(encoding="utf-8"),
-                }
-            )
-    if not docs:
-        # 无本地文件时回退：网络采集 + 内置样例
-        print("[ingest] 未发现本地语料，使用网络采集 + 内置样例")
-        docs.extend(
-            {"title": t, "source": u, "doc_type": "institution", "text": ""}
-            for t, u in [("placeholder", "")]  # 实际由 crawl 填充
-        )
-    return docs
+    """本地语料与来源元数据；无文件时由 main 的采集/样例路径兜底。"""
+    return load_corpus(DATA_DIR)
 
 
 async def main() -> None:
@@ -63,25 +41,15 @@ async def main() -> None:
         print(f"  网络采集失败（使用本地/内置语料）: {exc}")
         crawled = []
 
-    docs: list[dict] = []
+    docs = _build_docs()
+    titles = {d["title"] for d in docs}
     for page in crawled:
+        if page["title"] in titles:
+            continue
         docs.append(
             {"title": page["title"], "source": page["source"], "doc_type": "institution", "text": page["text"]}
         )
-    # 本地语料优先（data/kb/{institution,regulation,templates}/*.txt），标题去重
-    for folder, doc_type in [
-        ("institution", "institution"),
-        ("regulation", "regulation"),
-        ("templates", "template"),
-    ]:
-        for path in sorted((DATA_DIR / folder).glob("*.txt")):
-            title = path.stem
-            if any(d["title"] == title for d in docs):
-                continue
-            docs.append(
-                {"title": title, "source": f"file://{path}", "doc_type": doc_type,
-                 "text": path.read_text(encoding="utf-8")}
-            )
+        titles.add(page["title"])
     # 内置样例仅作为兜底（本地同名标题时跳过）
     for title, text in REGULATION_SAMPLES.items():
         if not any(d["title"] == title for d in docs):
@@ -99,6 +67,8 @@ async def main() -> None:
             doc["text"], doc_id=doc["title"], source=doc["source"],
             doc_type=doc["doc_type"],
         )
+        for chunk in chunks:
+            chunk.meta.update(doc.get("meta", {}))
         all_chunks.extend(chunks)
     print(f"  共 {len(all_chunks)} 个 chunk")
 
