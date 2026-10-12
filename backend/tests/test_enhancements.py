@@ -10,8 +10,14 @@ from app.skills.rules import apply_all_rules, apply_rules
 
 class TestRuleEngine:
     def test_prepayment_ratio(self):
-        out = apply_rules("预付款比例 40% 在合同签订后支付", "财务与付款")
-        assert out and out[0]["risk_level"] == "高"
+        assert apply_rules("预付款比例 40% 在合同签订后支付", "财务与付款") == []
+        assert apply_rules("验收后支付合同总价60%", "财务与付款") == []
+        assert apply_rules("预付款比例100%并提交等额预付款保函", "财务与付款") == []
+        out = apply_rules("预付款比例100%在交货前支付", "财务与付款")
+        assert out and out[0]["risk_level"] == "中"
+
+    def test_arbitration_finality_is_not_a_defect(self):
+        assert apply_rules("提交深圳国际仲裁院仲裁，裁决一裁终局", "争议解决与管辖") == []
 
     def test_penalty_base(self):
         out = apply_rules("乙方逾期付款按日万分之五支付违约金", "违约责任与解除")
@@ -22,7 +28,7 @@ class TestRuleEngine:
         assert out and out[0]["risk_level"] == "高"
 
     def test_apply_all_rules(self):
-        out = apply_all_rules(["预付款比例 40% 支付", "验收双方组织", "正常条款"])
+        out = apply_all_rules(["预付款比例 100% 支付", "验收双方组织", "正常条款"])
         assert len(out) >= 2
 
 

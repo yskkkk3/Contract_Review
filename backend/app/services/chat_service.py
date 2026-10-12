@@ -9,6 +9,7 @@ import time
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session as DBSession
 
+from app.agent.prompts import load_prompt
 from app.core.config import get_settings
 from app.core.metrics import record
 from app.core.storage import get_storage
@@ -19,8 +20,7 @@ from app.schemas.chat import ChatRequest
 
 settings = get_settings()
 
-SYSTEM_TEMPLATE = """你是高校合同审阅助手，围绕当前合同文件回答用户问题。
-规则：只依据合同原文与检索到的制度/法规回答；无法确定时明确说明；不编造条款。"""
+SYSTEM_TEMPLATE = load_prompt("chat")
 
 
 async def _history_messages(db: DBSession, session_id: int) -> list[dict]:

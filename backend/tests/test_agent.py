@@ -49,6 +49,33 @@ def test_gate_rule_check():
     assert len(_rule_check(bad)) >= 3
 
 
+def test_gate_rejects_rewritten_or_spliced_original():
+    point = {"original_content": "交付后30日付款", "risk_analysis": "期限不明",
+             "risk_level": "中", "suggested_content": "明确付款期限"}
+    assert _rule_check(point, "交付后30日付款，另附结算材料。") == []
+    assert _rule_check(point, "货物交付后办理验收，验收后30日付款。")
+
+
+async def test_gate_repair_cannot_add_unretrieved_citations(monkeypatch):
+    from app.agent.nodes import gate
+
+    original = {"original_content": "合同条款", "risk_analysis": "分析", "risk_level": "超高",
+                "suggested_content": "建议", "evidence_refs": ["已核验文档"]}
+
+    async def check(*args):
+        return True
+
+    async def repair(*args):
+        return {**original, "risk_level": "中", "evidence_refs": ["虚构文档", "已核验文档", {}]}
+
+    monkeypatch.setattr(gate, "_llm_check", check)
+    monkeypatch.setattr(gate, "_retry_fix", repair)
+    result = await gate.gate_node({"chunks": ["合同条款"], "specialist_outputs": [
+        {"chunk_index": 0, "risk_dim": "财务与付款", "result": [original]},
+    ]})
+    assert result["gated"][0]["evidence_refs"] == ["已核验文档"]
+
+
 def test_arbitration_merge_and_sort():
     points = [
         {"chunk_index": 2, "original_content": "B", "risk_analysis": "a1", "risk_level": "中",

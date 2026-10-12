@@ -21,10 +21,12 @@ GATE_SCHEMA: dict = {
 }
 
 
-def _rule_check(point: dict) -> list[str]:
+def _rule_check(point: dict, chunk: str | None = None) -> list[str]:
     errors: list[str] = []
     if not point.get("original_content", "").strip():
         errors.append("original_content 为空")
+    elif chunk is not None and point["original_content"] not in chunk:
+        errors.append("original_content 不是当前条款的连续原文")
     if point.get("risk_level") not in VALID_LEVELS:
         errors.append("risk_level 非法")
     if not point.get("risk_analysis", "").strip():
@@ -34,13 +36,13 @@ def _rule_check(point: dict) -> list[str]:
     return errors
 
 
-async def _llm_check(point: dict) -> bool:
+async def _llm_check(point: dict, chunk: str) -> bool:
     try:
         prompt = load_prompt("gate")
         data = await get_sf_client().chat_structured(
             [
                 {"role": "system", "content": prompt},
-                {"role": "user", "content": json.dumps(point, ensure_ascii=False)},
+                {"role": "user", "content": json.dumps({"clause": chunk, "risk_point": point}, ensure_ascii=False)},
             ],
             json_schema=GATE_SCHEMA,
             model=settings.llm_intent_model,
@@ -58,8 +60,8 @@ async def _retry_fix(point: dict, chunk: str, risk_dim: str) -> dict | None:
         sf = get_sf_client()
         raw = await sf.chat(
             [
-                {"role": "system", "content": "你是合同审阅结果修复器。根据质检错误修正输出，保持 JSON 结构不变。"},
-                {"role": "user", "content": f"条款：{chunk[:500]}\n维度：{risk_dim}\n上次输出：{json.dumps(point, ensure_ascii=False)}\n请修正。"},
+                {"role": "system", "content": load_prompt("gate_repair")},
+                {"role": "user", "content": f"条款：{chunk}\n维度：{risk_dim}\n上次输出：{json.dumps(point, ensure_ascii=False)}\n请修正。"},
             ],
             model=settings.llm_review_model,
             temperature=0,
@@ -82,12 +84,19 @@ async def gate_node(state: ReviewState) -> dict:
     gated: list[dict] = []
     for output in state["specialist_outputs"]:
         for point in output.get("result", []):
-            errors = _rule_check(point)
-            llm_ok = await _llm_check(point)
+            chunk = state["chunks"][output["chunk_index"]]
+            errors = _rule_check(point, chunk)
+            llm_ok = await _llm_check(point, chunk)
             if errors or not llm_ok:
                 # 纠错重试一次
                 fixed = await _retry_fix(point, state["chunks"][output["chunk_index"]], output["risk_dim"])
-                if fixed and not _rule_check(fixed):
+                if fixed and not _rule_check(fixed, chunk) and await _llm_check(fixed, chunk):
+                    # 修复阶段没有重新检索，不能凭空增加未经专家阶段核验的引用。
+                    refs = fixed.get("evidence_refs", [])
+                    allowed = point.get("evidence_refs", [])
+                    fixed["evidence_refs"] = [
+                        ref for ref in refs if isinstance(ref, str) and ref in allowed
+                    ] if isinstance(refs, list) else []
                     point = fixed
                 else:
                     if errors:

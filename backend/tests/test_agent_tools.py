@@ -151,3 +151,26 @@ async def test_tool_result_truncation(monkeypatch):
     fed = client.calls[1]["messages"][-1]["content"]
     assert len(fed) <= 60
     assert "已截断" in fed
+
+
+async def test_specialist_keeps_only_explicit_retrieved_citations(monkeypatch):
+    import asyncio
+
+    from app.agent.nodes import specialist
+    from app.agent.tools.executor import ToolCallRecord
+
+    async def run_tools(*args, **kwargs):
+        return (
+            '{"risk_points": [{"original_content": "付款条件不明", "risk_analysis": "存在付款争议", '
+            '"risk_level": "中", "suggested_content": "明确起算日", '
+            '"evidence_refs": ["支持文档", "伪造文档", "支持文档", {}]}]}',
+            [ToolCallRecord("search_regulations", {}, ["支持文档", "其他命中"], True, 1)],
+        )
+
+    monkeypatch.setattr(specialist, "get_sf_client", lambda: object())
+    monkeypatch.setattr(specialist, "call_llm_with_tools", run_tools)
+    state = {"stance": "甲方", "intensity": "标准", "chunks": ["付款条件不明"]}
+    result = await specialist._run_specialist(
+        asyncio.Semaphore(1), state["chunks"][0], "财务与付款", state, None,
+    )
+    assert result["result"][0]["evidence_refs"] == ["支持文档"]

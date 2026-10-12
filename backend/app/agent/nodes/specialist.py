@@ -21,14 +21,6 @@ settings = get_settings()
 
 MAX_REACT_ROUNDS = 3
 
-TOOL_USAGE_HINT = (
-    "\n\n【审阅工作流】\n"
-    "1. 先使用 search_regulations 检索与条款相关的法规/制度/模板证据（可多轮、可换关键词）；\n"
-    "2. 依据检索证据与条款原文输出风险点 JSON；\n"
-    "3. 涉及金额计算时使用 calc_penalty 工具，禁止心算。"
-)
-
-
 def _normalize_level(level: str) -> str:
     """多供应商字段漂移归一化：high→高 / medium→中 / low→低。"""
     mapping = {"high": "高", "medium": "中", "low": "低", "严重": "高", "较高": "高", "一般": "中", "较低": "低"}
@@ -114,7 +106,6 @@ async def _run_specialist(
         )
         if dim_prompt:
             system += f"\n\n【{risk_dim}审阅细则】\n{dim_prompt}"
-        system += TOOL_USAGE_HINT
 
         contract_content = "\n".join(state["chunks"])
 
@@ -137,7 +128,8 @@ async def _run_specialist(
             {"role": "user", "content": user_msg},
         ]
 
-        # 真 ReAct：模型自主调用工具（检索证据由模型生成 query）
+        # 仅保留模型实际引用且本轮真实检索到的文档，不把全部命中回填为依据。
+        retrieved_doc_ids: set[str] = set()
         try:
             text, tool_log = await call_llm_with_tools(
                 sf,
@@ -148,6 +140,7 @@ async def _run_specialist(
                 max_tokens=2048,
                 context=ctx,
             )
+            retrieved_doc_ids.update(doc_id for rec in tool_log if rec.ok for doc_id in rec.doc_ids)
             points = _parse_risk_points(text)
             # 条款原文兜底：模型未输出 original_content 时，用本条 chunk 作为条款上下文
             for p in points:
@@ -156,14 +149,11 @@ async def _run_specialist(
             if not points:
                 # 未解析出风险点 → 检索证据后再试（降级路径）
                 evidence_ctx, evidence = await rag.search_with_context(chunk, risk_dim=risk_dim, top_k=3)
-                doc_ids = list({e.chunk.doc_id for e in evidence})
+                retrieved_doc_ids.update(e.chunk.doc_id for e in evidence)
                 messages.append({"role": "user", "content": f"【检索证据】\n{evidence_ctx}\n\n请据此重新输出审阅结果 JSON。"})
                 try:
                     retry = await sf.chat(messages, model=settings.llm_review_model, temperature=0.2, max_tokens=2048)
                     points = _parse_risk_points(retry)
-                    if points:
-                        for p in points:
-                            p.setdefault("evidence_refs", doc_ids)
                 except Exception:  # noqa: BLE001
                     points = []
         except Exception as exc:  # noqa: BLE001 故障隔离：LLM 调用失败不拖垮整体
@@ -171,15 +161,13 @@ async def _run_specialist(
             # 兜底：无模型结果，返回空（错误已记录）
             points = []
 
-        # 证据引用回填：把本次工具调用检索到的 doc_id 合并进每个风险点
         if points:
-            tool_doc_ids: list[str] = []
-            for rec in tool_log:
-                tool_doc_ids.extend(rec.doc_ids)
-            tool_doc_ids = list(dict.fromkeys(tool_doc_ids))
             for p in points:
-                refs = list(p.get("evidence_refs") or [])
-                p["evidence_refs"] = list(dict.fromkeys(refs + tool_doc_ids))[:5]
+                refs = [
+                    ref for ref in p.get("evidence_refs", [])
+                    if isinstance(ref, str) and ref in retrieved_doc_ids
+                ]
+                p["evidence_refs"] = list(dict.fromkeys(refs))[:5]
 
             # 流式推送：单个专家任务完成即推 SSE（LangGraph custom stream mode）
             try:
