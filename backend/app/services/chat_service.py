@@ -9,7 +9,6 @@ import time
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session as DBSession
 
-from app.core.cache import cache_get
 from app.core.config import get_settings
 from app.core.metrics import record
 from app.core.storage import get_storage
@@ -24,24 +23,14 @@ SYSTEM_TEMPLATE = """你是高校合同审阅助手，围绕当前合同文件�
 规则：只依据合同原文与检索到的制度/法规回答；无法确定时明确说明；不编造条款。"""
 
 
-async def _history_messages(db: DBSession, session_id: int, max_turns: int = 10) -> list[dict]:
-    # Redis 缓存：热点会话直接命中，TTL=chat_cache_ttl
-    cache_key = f"chat:{session_id}:history"
-    cached = await cache_get(cache_key)
-    if cached:
-        try:
-            msgs = json.loads(cached)
-            return msgs[-max_turns * 2 :]
-        except Exception:  # noqa: BLE001
-            pass
+async def _history_messages(db: DBSession, session_id: int) -> list[dict]:
+    """返回当前会话的完整消息历史，供模型保持会话内记忆。"""
     rows = (
         db.query(Message)
         .filter(Message.session_id == session_id)
-        .order_by(Message.id.desc())
-        .limit(max_turns * 2)
+        .order_by(Message.id.asc())
         .all()
     )
-    rows.reverse()
     return [{"role": m.role, "content": m.content} for m in rows]
 
 
