@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Text
+from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -16,5 +17,8 @@ class ComparisonTask(Base):
     standard_file_id: Mapped[int] = mapped_column(ForeignKey("contract_files.id"))
     comparison_file_id: Mapped[int] = mapped_column(ForeignKey("contract_files.id"))
     diff_summary: Mapped[str] = mapped_column(Text, default="{}")  # JSON
-    diff_result: Mapped[str] = mapped_column(Text, default="[]")  # JSON
+    diff_result: Mapped[str] = mapped_column(
+        Text().with_variant(LONGTEXT(), "mysql"),
+        default="[]",
+    )  # JSON
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

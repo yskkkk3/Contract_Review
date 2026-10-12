@@ -45,6 +45,9 @@ cd backend
 uv sync                          # 安装依赖（含 dev）
 uv run uvicorn app.main:app --reload --port 8080
 
+# 从旧版本升级已有 MySQL 数据库时执行一次（幂等）
+uv run python scripts/migrate_comparison_diff_result.py
+
 # ---- 前端（frontend/）----
 cd frontend
 npm install
