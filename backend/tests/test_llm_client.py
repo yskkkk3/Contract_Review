@@ -113,6 +113,40 @@ async def test_prompt_cache_disabled(monkeypatch, fake_openai):
 
 
 @pytest.mark.asyncio
+async def test_brief_deepseek_tasks_preserve_output_budget(monkeypatch, fake_openai):
+    client = LLMClient()
+    client.base_url = "https://api.deepseek.com/v1"
+    client._prompt_cache = True
+    captured = {}
+
+    async def create(**kwargs):
+        captured.update(kwargs)
+        return _FakeResp('{"valid":true}')
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    await client.chat([{"role": "user", "content": "短任务"}], brief=True)
+    assert captured["extra_body"] == {"thinking": {"type": "disabled"}, "cache_prompt": True}
+    await client.chat_structured([], json_schema={"type": "object"})
+    assert captured["extra_body"]["thinking"] == {"type": "disabled"}
+
+
+@pytest.mark.asyncio
+async def test_brief_other_providers_receive_no_deepseek_options(monkeypatch, fake_openai):
+    client = LLMClient()
+    client.base_url = "https://example.org/v1"
+    client._prompt_cache = False
+    captured = {}
+
+    async def create(**kwargs):
+        captured.update(kwargs)
+        return _FakeResp()
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    await client.chat([], brief=True)
+    assert "extra_body" not in captured
+
+
+@pytest.mark.asyncio
 async def test_embed_uses_independent_embedding_client(monkeypatch, fake_openai):
     client = LLMClient()
     captured = {}

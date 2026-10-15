@@ -5,6 +5,7 @@ chat / embeddings 使用 OpenAI SDK；rerank 使用供应商兼容的 HTTP 接�
 """
 import asyncio
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from openai import AsyncOpenAI
@@ -72,6 +73,14 @@ class LLMClient:
             kwargs["extra_body"] = extra
         return kwargs
 
+    def _task_options(self, kwargs: dict, brief: bool) -> dict:
+        """短结构化任务不应把输出预算全部消耗在 DeepSeek thinking 中。"""
+        if brief and urlsplit(self.base_url).hostname == "api.deepseek.com":
+            extra = dict(kwargs.get("extra_body") or {})
+            extra.setdefault("thinking", {"type": "disabled"})
+            kwargs["extra_body"] = extra
+        return self._apply_cache(kwargs)
+
     @property
     def http(self) -> httpx.AsyncClient:
         """供 rerank 等供应商扩展接口使用。"""
@@ -97,6 +106,7 @@ class LLMClient:
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        brief: bool = False,
         **kwargs: Any,
     ) -> str:
         model = model or settings.llm_review_model
@@ -106,7 +116,7 @@ class LLMClient:
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                **self._apply_cache(kwargs),
+                **self._task_options(kwargs, brief),
             )
         return resp.choices[0].message.content or ""
 
@@ -144,6 +154,7 @@ class LLMClient:
         model: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 512,
+        brief: bool = True,
         **kwargs: Any,
     ) -> dict | None:
         """Structured output：response_format=json_schema 返回解析后的 dict。
@@ -163,7 +174,7 @@ class LLMClient:
                         "type": "json_schema",
                         "json_schema": {"name": "structured_output", "strict": True, "schema": json_schema},
                     },
-                    **self._apply_cache(kwargs),
+                    **self._task_options(kwargs, brief),
                 )
             content = resp.choices[0].message.content or ""
             parsed = _extract_json(content)
@@ -173,7 +184,8 @@ class LLMClient:
             pass
         try:
             raw = await self.chat(
-                messages, model=model, temperature=temperature, max_tokens=max_tokens, **kwargs
+                messages, model=model, temperature=temperature, max_tokens=max_tokens,
+                brief=brief, **kwargs,
             )
             return _extract_json(raw)
         except Exception:  # noqa: BLE001
