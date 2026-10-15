@@ -79,6 +79,9 @@ class Settings(BaseSettings):
     rag_rerank_top_k: int = 5
     rag_query_variants: int = 3
     rag_per_doc_quota: int = 3  # 分层配额：每个文档最多 N 个 chunk 进入 rerank
+    rag_evidence_rerank_enabled: bool = True
+    rag_evidence_rerank_docs: int = 30  # cross-encoder 后复核的最大文档数
+    rag_evidence_rerank_timeout: float = 20.0
 
     # langfuse
     langfuse_public_key: str = ""

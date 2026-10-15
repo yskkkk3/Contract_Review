@@ -31,7 +31,10 @@ class BM25Index:
         self._corpus.extend(tokenize(c.text) for c in chunks)
         self._bm25 = BM25Okapi(self._corpus)
 
-    def search(self, query: str, top_k: int = 30, doc_type: str | None = None) -> list[tuple[Chunk, float]]:
+    def search(
+        self, query: str, top_k: int = 30, doc_type: str | None = None,
+        filters: dict | None = None,
+    ) -> list[tuple[Chunk, float]]:
         if not self._bm25:
             return []
         q_tokens = tokenize(query)
@@ -43,6 +46,10 @@ class BM25Index:
                 continue
             chunk = self._chunks[idx]
             if doc_type and chunk.doc_type != doc_type:
+                continue
+            if filters and any(
+                getattr(chunk, key, chunk.meta.get(key)) != value for key, value in filters.items()
+            ):
                 continue
             out.append((chunk, float(score)))
             if len(out) >= top_k:

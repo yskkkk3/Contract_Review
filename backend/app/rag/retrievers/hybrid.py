@@ -4,6 +4,7 @@
 直接相加的尺度问题，再由 Cross-encoder 精排提精度。
 """
 import hashlib
+import json
 from dataclasses import dataclass
 
 from qdrant_client import AsyncQdrantClient, models
@@ -22,30 +23,36 @@ class RetrievedChunk:
     score: float
 
 
+def chunk_key(chunk: Chunk) -> str:
+    """完整内容与章节共同标识条文，不能只比较相同的开头。"""
+    identity = json.dumps([chunk.doc_id, chunk.section, chunk.text], ensure_ascii=False)
+    return hashlib.sha256(identity.encode()).hexdigest()
+
+
+def fuse_rankings(rankings: list[list[Chunk]], k: int = 60) -> list[tuple[Chunk, float]]:
+    """按排名融合任意多路召回；每一路同一条文最多贡献一次。"""
+    scores: dict[str, float] = {}
+    chunks: dict[str, Chunk] = {}
+    for ranking in rankings:
+        seen: set[str] = set()
+        for rank, chunk in enumerate(ranking, start=1):
+            key = chunk_key(chunk)
+            if key in seen:
+                continue
+            seen.add(key)
+            scores[key] = scores.get(key, 0.0) + 1.0 / (k + rank)
+            chunks[key] = chunk
+    return [(chunks[key], score) for key, score in
+            sorted(scores.items(), key=lambda item: item[1], reverse=True)]
+
+
 def rrf_fusion(
     dense_ranked: list[Chunk],
     sparse_ranked: list[Chunk],
     k: int = 60,
 ) -> list[tuple[Chunk, float]]:
     """Reciprocal Rank Fusion：score = Σ 1/(k + rank)。"""
-    fused: dict[str, list[float]] = {}
-    chunks_by_key: dict[str, Chunk] = {}
-
-    def key(c: Chunk) -> str:
-        return hashlib.md5(f"{c.doc_id}:{c.text[:80]}".encode()).hexdigest()
-
-    for rank, chunk in enumerate(dense_ranked):
-        kk = key(chunk)
-        fused.setdefault(kk, []).append(1.0 / (k + rank + 1))
-        chunks_by_key[kk] = chunk
-    for rank, chunk in enumerate(sparse_ranked):
-        kk = key(chunk)
-        fused.setdefault(kk, []).append(1.0 / (k + rank + 1))
-        chunks_by_key[kk] = chunk
-
-    scored = [(chunks_by_key[kk], sum(scores)) for kk, scores in fused.items()]
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return scored
+    return fuse_rankings([dense_ranked, sparse_ranked], k=k)
 
 
 class HybridRetriever:
@@ -60,12 +67,20 @@ class HybridRetriever:
         top_k: int = 60,
         doc_type: str | None = None,
         filters: dict | None = None,
+        query_vector: list[float] | None = None,
     ) -> list[RetrievedChunk]:
         """双路召回 → RRF 融合 → 返回按融合分排序的 chunks。"""
-        sf = get_sf_client()
-
         # ---- dense 路：Qdrant 向量检索 ----
-        q_vector = (await sf.embed([query]))[0]
+        q_vector = query_vector if query_vector is not None else (await get_sf_client().embed([query]))[0]
+        collection_types = {
+            settings.qdrant_collection_regulations: "regulation",
+            settings.qdrant_collection_institution: "institution",
+            settings.qdrant_collection_templates: "template",
+        }
+        collection_type = collection_types.get(collection)
+        if doc_type and collection_type and doc_type != collection_type:
+            return []
+        doc_type = doc_type or collection_type
         q_filter = None
         conditions: list[models.FieldCondition] = []
         if doc_type:
@@ -101,7 +116,7 @@ class HybridRetriever:
         ]
 
         # ---- sparse 路：BM25 ----
-        sparse_ranked = self.bm25.search(query, top_k=top_k, doc_type=doc_type)
+        sparse_ranked = self.bm25.search(query, top_k=top_k, doc_type=doc_type, filters=filters)
         sparse_chunks = [c for c, _ in sparse_ranked]
 
         # ---- RRF 融合 ----

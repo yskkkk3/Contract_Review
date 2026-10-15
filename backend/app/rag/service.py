@@ -1,17 +1,17 @@
 """RAG service facade: single entry for agent tool calls (search_regulations)."""
 import asyncio
-import hashlib
 from pathlib import Path
 
 from qdrant_client import AsyncQdrantClient
 
 from app.core.config import get_settings
 from app.core.qdrant import create_qdrant_client
+from app.rag.client import get_sf_client
 from app.rag.context import build_context
 from app.rag.ingest.loader import ensure_collection
 from app.rag.query_expansion import expand_query
-from app.rag.rerank import rerank_chunks
-from app.rag.retrievers.hybrid import HybridRetriever, RetrievedChunk
+from app.rag.rerank import rerank_chunks, rerank_evidence
+from app.rag.retrievers.hybrid import HybridRetriever, RetrievedChunk, chunk_key, fuse_rankings
 from app.rag.retrievers.sparse_bm25 import BM25Index
 
 settings = get_settings()
@@ -24,8 +24,8 @@ _COLLECTIONS = (
 
 
 def _chunk_key(chunk) -> str:
-    """与 hybrid.py RRF 融合一致的去重键（doc_id + 文本前缀）。"""
-    return hashlib.md5(f"{chunk.doc_id}:{chunk.text[:80]}".encode()).hexdigest()
+    """兼容旧调用方，检索与跨查询合并使用相同的完整条文标识。"""
+    return chunk_key(chunk)
 
 # 风险维度 → 优先检索的知识库层
 DIM_TO_COLLECTION = {
@@ -91,25 +91,25 @@ class RAGService:
         导致文档级 Recall 被低估。
         """
         queries = await expand_query(query)
+        # 每个查询只向量化一次，三库复用；不能把同一个查询重复计费三次。
+        query_vectors = await get_sf_client().embed(queries)
+        if len(query_vectors) != len(queries):
+            raise ValueError("Embedding result count does not match query count")
         # 并行执行：变体 × 三层知识库
         tasks = [
             self.retriever.retrieve(
-                q, collection, top_k=settings.rag_hybrid_top_k, doc_type=doc_type
+                q, collection, top_k=settings.rag_hybrid_top_k, doc_type=doc_type,
+                query_vector=vector,
             )
-            for q in queries
+            for q, vector in zip(queries, query_vectors, strict=True)
             for collection in _COLLECTIONS
         ]
         results = await asyncio.gather(*tasks)
 
-        # 跨库/跨变体合并，按文档级 key 去重
-        candidates: list[RetrievedChunk] = []
-        seen: set[str] = set()
-        for cands in results:
-            for c in cands:
-                key = _chunk_key(c.chunk)
-                if key not in seen:
-                    seen.add(key)
-                    candidates.append(c)
+        # 多路命中累积排名贡献，不能由第一个返回的变体决定后续配额。
+        candidates = [RetrievedChunk(chunk, score) for chunk, score in fuse_rankings(
+            [[item.chunk for item in ranking] for ranking in results]
+        )]
 
         # 分层配额：每文档最多 N 个 chunk 进入精排（控制 rerank 开销 + 防霸榜）
         per_doc: dict[str, list[RetrievedChunk]] = {}
@@ -121,17 +121,9 @@ class RAGService:
             limited.extend(chunks[: settings.rag_per_doc_quota])
 
         # 精排用原始查询（改写只服务召回，避免变体语义污染排序）
-        reranked = await rerank_chunks(query, limited, top_k=top_k * 3)
-        # 终排文档级去重：同一文档只保留最高分 chunk，凑满 top_k
-        final: list[RetrievedChunk] = []
-        seen_docs: set[str] = set()
-        for c in reranked:
-            if c.chunk.doc_id not in seen_docs:
-                seen_docs.add(c.chunk.doc_id)
-                final.append(c)
-            if len(final) >= top_k:
-                break
-        return final
+        # 文档级复核需要看到候选中每篇文档的最佳条文，不能先按少量 chunk 截断。
+        reranked = await rerank_chunks(query, limited, top_k=len(limited))
+        return await rerank_evidence(query, reranked, top_k)
 
     async def search_with_context(
         self,

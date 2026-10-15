@@ -10,17 +10,12 @@ import logging
 import time
 from collections import OrderedDict
 
+from app.agent.prompts import load_prompt
 from app.core.config import get_settings
 from app.rag.client import get_sf_client
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
-
-_EXPAND_SYSTEM_PROMPT = """你是采购合同审阅领域的检索查询改写助手。给定用户的原始查询，生成 {n} 个检索变体，要求：
-1. 从"同义改写、拆分子问题、专业术语扩展"三个角度各写一版，彼此互补、不重复；
-2. 保持原查询核心语义，不添加原文没有的事实；
-3. 只输出 JSON 字符串数组，例如 ["变体1", "变体2"]，不要任何解释文字。"""
-
 
 class _TTLCache:
     """进程内 TTL 缓存：同一查询的改写结果复用，避免重复打 LLM。"""
@@ -51,12 +46,13 @@ _cache = _TTLCache()
 
 
 async def expand_query(query: str, variants: int | None = None) -> list[str]:
-    """返回 [原查询, *改写变体]（共 min(variants,1)+1 个查询）；任何失败降级为 [query]。"""
-    variants = variants or settings.rag_query_variants
+    """返回原查询及最多 variants-1 个互补改写；任何失败降级为原查询。"""
+    variants = settings.rag_query_variants if variants is None else variants
     if variants <= 1 or not query.strip():
         return [query]
 
-    cached = _cache.get(query)
+    cache_key = f"{variants}:{query}"
+    cached = _cache.get(cache_key)
     if cached is not None:
         return cached
 
@@ -64,16 +60,17 @@ async def expand_query(query: str, variants: int | None = None) -> list[str]:
         sf = get_sf_client()
         raw = await sf.chat(
             messages=[
-                {"role": "system", "content": _EXPAND_SYSTEM_PROMPT.format(n=variants - 1)},
+                {"role": "system", "content": load_prompt("rag_query_expansion", n=variants - 1)},
                 {"role": "user", "content": query},
             ],
             model=settings.llm_intent_model,  # 轻量模型即可
             temperature=0.2,
             max_tokens=512,
+            brief=True,
         )
         extra = _parse_variants(raw, limit=variants - 1)
-        result = [query, *extra]
-        _cache.set(query, result)
+        result = [query, *(item for item in extra if item != query)]
+        _cache.set(cache_key, result)
         return result
     except Exception as exc:  # noqa: BLE001
         logger.warning("query expansion failed, fallback to raw query: %s", exc)
@@ -82,6 +79,8 @@ async def expand_query(query: str, variants: int | None = None) -> list[str]:
 
 def _parse_variants(raw: str, limit: int) -> list[str]:
     """容错解析：剥离 markdown 围栏与前后缀，取首个 JSON 数组；失败返回空。"""
+    if limit <= 0:
+        return []
     text = raw.strip()
     if text.startswith("```"):
         text = text.strip("`").removeprefix("json").strip()
