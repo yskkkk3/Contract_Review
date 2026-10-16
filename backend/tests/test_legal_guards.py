@@ -1,7 +1,7 @@
 """已知重大例外不能被模型质检的误放行重新覆盖。"""
 import pytest
 
-from app.agent.rules.legal_guards import legal_conclusion_errors
+from app.agent.rules.legal_guards import legal_conclusion_errors, required_legal_findings
 
 EVIDENCE = "第五百九十条：迟延履行后发生不可抗力的，不免除其违约责任。"
 FACT = "乙方已迟延交付设备后发生洪水，主张不可抗力免责。"
@@ -18,6 +18,18 @@ FACT = "乙方已迟延交付设备后发生洪水，主张不可抗力免责。
 ])
 def test_late_performance_guard_requires_explicit_facts_and_visible_rule(clause, advice, evidence, blocked):
     assert bool(legal_conclusion_errors({"suggested_content": advice}, clause, evidence)) is blocked
+
+
+def test_late_performance_rule_supplies_omitted_safety_finding_once():
+    findings = required_legal_findings(FACT, EVIDENCE, [])
+    assert len(findings) == 1
+    assert "迟延履行后发生不可抗力的，不免除其违约责任" in findings[0]["risk_analysis"]
+    assert required_legal_findings(FACT, EVIDENCE, findings) == []
+
+
+def test_required_finding_needs_explicit_fact_and_visible_rule():
+    assert required_legal_findings("发生洪水后可能无法履行", EVIDENCE, []) == []
+    assert required_legal_findings(FACT, "未展示依据", []) == []
 
 
 async def test_bad_repair_cannot_be_streamed_despite_model_approval(monkeypatch):
@@ -40,4 +52,5 @@ async def test_bad_repair_cannot_be_streamed_despite_model_approval(monkeypatch)
     result = await gate.gate_node({"chunks": [FACT], "specialist_outputs": [{
         "chunk_index": 0, "risk_dim": "违约责任与解除", "result": [point], "evidence_context": EVIDENCE,
     }]})
-    assert result["gated"] == [] and result["errors"] and streamed == []
+    assert len(result["gated"]) == 1 and "迟延履行后" in result["gated"][0]["risk_analysis"]
+    assert result["errors"] and len(streamed) == 1

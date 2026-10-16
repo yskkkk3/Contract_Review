@@ -236,6 +236,13 @@ async def _run_specialist(
                     audit_unresolved = audit["unresolved"]
                     if audit["status"] == "incomplete" or audit["unresolved"]:
                         diagnostics.append("完整性复核仍有关键依据或材料待核实")
+                    else:
+                        # The completeness pass independently sees the clause and verified evidence.
+                        # A successful replacement therefore resolves a transient first-pass failure.
+                        diagnostics = [
+                            item for item in diagnostics
+                            if not item.startswith(f"specialist[{risk_dim}] failed:")
+                        ]
                 else:
                     audit_status = "invalid"
                     diagnostics.append("完整性复核未返回有效结果")

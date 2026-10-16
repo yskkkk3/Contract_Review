@@ -70,10 +70,57 @@ async def test_gate_repair_cannot_add_unretrieved_citations(monkeypatch):
 
     monkeypatch.setattr(gate, "_llm_check", check)
     monkeypatch.setattr(gate, "_retry_fix", repair)
+    monkeypatch.setattr("langgraph.config.get_stream_writer", lambda: lambda _: None)
     result = await gate.gate_node({"chunks": ["合同条款"], "specialist_outputs": [
         {"chunk_index": 0, "risk_dim": "财务与付款", "result": [original]},
     ]})
     assert result["gated"][0]["evidence_refs"] == ["已核验文档"]
+
+
+async def test_gate_drops_compliance_comment_without_recording_false_failure(monkeypatch):
+    from app.agent.nodes import gate
+
+    point = {"original_content": "通知并证明", "risk_analysis": "现有约定充分",
+             "risk_level": "低", "suggested_content": "维持现状", "evidence_refs": []}
+
+    async def drop(*args):
+        return {"decision": "drop", "issues": []}
+
+    monkeypatch.setattr(gate, "_llm_check", drop)
+    monkeypatch.setattr("langgraph.config.get_stream_writer", lambda: lambda _: None)
+    result = await gate.gate_node({"chunks": ["通知并证明"], "errors": [],
+                                   "specialist_outputs": [{"chunk_index": 0,
+                                                           "risk_dim": "违约责任与解除",
+                                                           "result": [point]}]})
+    assert result == {"gated": [], "errors": []}
+
+
+async def test_gate_passes_specific_llm_issues_to_repair(monkeypatch):
+    from app.agent.nodes import gate
+
+    point = {"original_content": "付款90日", "risk_analysis": "期限风险",
+             "risk_level": "中", "suggested_content": "直接改为60日", "evidence_refs": []}
+    repaired = {**point, "suggested_content": "先核验主体与行业习惯，再调整期限"}
+    seen = []
+
+    async def assess(candidate, *args):
+        if candidate["suggested_content"] == point["suggested_content"]:
+            return {"decision": "revise", "issues": ["建议未区分大型企业适用规则"]}
+        return {"decision": "accept", "issues": []}
+
+    async def repair(*args):
+        seen.extend(args[-1])
+        return repaired
+
+    monkeypatch.setattr(gate, "_llm_check", assess)
+    monkeypatch.setattr(gate, "_retry_fix", repair)
+    monkeypatch.setattr("langgraph.config.get_stream_writer", lambda: lambda _: None)
+    result = await gate.gate_node({"chunks": ["付款90日"], "errors": [],
+                                   "specialist_outputs": [{"chunk_index": 0,
+                                                           "risk_dim": "财务与付款",
+                                                           "result": [point]}]})
+    assert result["gated"][0]["suggested_content"] == repaired["suggested_content"]
+    assert seen == ["建议未区分大型企业适用规则"]
 
 
 def test_arbitration_merge_and_sort():

@@ -177,6 +177,39 @@ async def test_completeness_audit_catches_omission_in_empty_draft_without_answer
     assert result["result"][0]["evidence_refs"] == ["计算机软件保护条例·委托开发与许可边界"]
 
 
+async def test_successful_completeness_recovery_clears_transient_specialist_error(monkeypatch):
+    import asyncio
+
+    from app.agent.nodes import specialist
+    from app.rag.service import RAGService
+
+    clause = "学校委托乙方开发软件，无约定时学校主张著作权当然归学校。"
+    rag = object.__new__(RAGService)
+    rag.bm25 = corpus_index()
+
+    async def failed_tools(*args, **kwargs):
+        raise RuntimeError("transient upstream failure")
+
+    class Client:
+        async def chat_structured(self, *args, **kwargs):
+            return {"status": "revised", "unresolved": [], "risk_points": [{
+                "original_content": clause, "risk_analysis": "未约定时不当然归学校",
+                "risk_level": "高", "suggested_content": "书面明确权属",
+                "evidence_refs": ["计算机软件保护条例·委托开发与许可边界"],
+            }]}
+
+    monkeypatch.setattr(specialist, "get_sf_client", Client)
+    monkeypatch.setattr(specialist, "call_llm_with_tools", failed_tools)
+    monkeypatch.setattr(specialist.settings, "agent_evidence_audit_enabled", True)
+    result = await specialist._run_specialist(
+        asyncio.Semaphore(1), clause, "知识产权与保密",
+        {"stance": "甲方", "intensity": "标准", "chunks": [clause]}, rag,
+    )
+    assert result["audit_status"] == "revised"
+    assert len(result["result"]) == 1
+    assert result["diagnostics"] == []
+
+
 async def test_gate_rejects_missing_verdict_and_never_streams_rejected_result(monkeypatch):
     from app.agent.nodes import gate
 
