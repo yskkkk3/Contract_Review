@@ -20,7 +20,7 @@ SUMMARY_SCHEMA: dict = {
 }
 
 
-def _arbitrate_rules(points: list[dict]) -> list[dict]:
+def _arbitrate_rules(points: list[dict], chunks: list[str] | None = None) -> list[dict]:
     """按 chunk_index 排序 + 同条款风险合并（取最高等级）。"""
     merged: dict[int, dict] = {}
     for p in points:
@@ -50,7 +50,14 @@ def _arbitrate_rules(points: list[dict]) -> list[dict]:
                 dict.fromkeys((prev.get("evidence_refs") or []) + (p.get("evidence_refs") or []))
             )[:5]
             prev["dim_count"] += 1
-    return [merged[k] for k in sorted(merged)]
+    result = [merged[k] for k in sorted(merged)]
+    if chunks:
+        for point in result:
+            index = point["index"]
+            if 0 <= index < len(chunks) and point["original_content"] not in chunks[index]:
+                # 多项原文摘录合并时保留完整源条款，不能制造并不存在的连续原文。
+                point["original_content"] = chunks[index]
+    return result
 
 
 def _overall_risk(points: list[dict]) -> str:
@@ -88,7 +95,7 @@ async def _llm_summary(points: list[dict], stance: str) -> dict:
 
 
 async def arbitration_node(state: ReviewState) -> dict:
-    points = _arbitrate_rules(state["gated"])
+    points = _arbitrate_rules(state["gated"], state.get("chunks"))
     summary = await _llm_summary(points, state["stance"])
     summary["overall_risk"] = _overall_risk(points)
     summary["review_status"] = "incomplete" if state.get("errors") else "completed"

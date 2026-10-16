@@ -80,9 +80,11 @@ async def test_valid_empty_specialist_answer_does_not_retry_until_it_invents_a_r
     monkeypatch.setattr(specialist, "call_llm_with_tools", tools)
     result = await specialist._run_specialist(
         asyncio.Semaphore(1), "正常条款", "财务与付款",
-        {"stance": "甲方", "intensity": "标准", "chunks": ["正常条款"]}, None,
+        {"stance": "甲方", "intensity": "标准", "chunks": ["正常条款", "正常条款"]}, None,
+        chunk_index=1,
     )
     assert result["result"] == [] and result["diagnostics"] == []
+    assert result["chunk_index"] == 1
 
 
 async def test_gate_receives_real_evidence_and_fails_closed_when_check_unavailable(monkeypatch):
@@ -209,9 +211,10 @@ async def test_arbitration_preserves_each_material_repair_and_warns_on_incomplet
                "risk_analysis": "账期风险", "risk_level": "高", "suggested_content": "限制账期"},
               {"chunk_index": 0, "risk_dim": "财务与付款", "original_content": "保证金",
                "risk_analysis": "现金唯一限制", "risk_level": "中", "suggested_content": "允许非现金担保"}]
-    merged = arbitration._arbitrate_rules(points)
+    merged = arbitration._arbitrate_rules(points, ["付款和保证金"])
     assert "限制账期" in merged[0]["suggested_content"]
     assert "允许非现金担保" in merged[0]["suggested_content"]
+    assert merged[0]["original_content"] == "付款和保证金"
 
     async def summary(*args):
         return {"summary": "没有风险", "suggestion": "直接签订", "overall_risk": "低"}

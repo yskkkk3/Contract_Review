@@ -114,6 +114,7 @@ async def _run_specialist(
     risk_dim: str,
     state: ReviewState,
     rag: RAGService,
+    chunk_index: int | None = None,
 ) -> dict:
     """单个 (chunk, risk_dim) 专家任务：真 ReAct 工具循环 + 故障隔离。"""
     async with sem:
@@ -248,7 +249,8 @@ async def _run_specialist(
                 p["evidence_refs"] = list(dict.fromkeys(refs))[:5]
 
         return {
-            "chunk_index": state["chunks"].index(chunk), "risk_dim": risk_dim, "result": points,
+            "chunk_index": state["chunks"].index(chunk) if chunk_index is None else chunk_index,
+            "risk_dim": risk_dim, "result": points,
             "evidence_context": supplement.text if supplement else "",
             "coverage_issues": supplement.coverage.missing if supplement else [],
             "diagnostics": diagnostics,
@@ -260,7 +262,7 @@ async def specialist_node(state: ReviewState, rag: RAGService) -> dict:
     """map：并行执行所有 (chunk, risk_dim) 专家任务，信号量限流。"""
     sem = asyncio.Semaphore(state.get("max_concurrent", 20))
     tasks = [
-        _run_specialist(sem, state["chunks"][r["chunk_index"]], dim, state, rag)
+        _run_specialist(sem, state["chunks"][r["chunk_index"]], dim, state, rag, r["chunk_index"])
         for r in state["routed"]
         for dim in r["risk_dims"]
     ]
