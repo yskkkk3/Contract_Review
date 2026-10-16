@@ -60,6 +60,7 @@ async def run(output: Path, concurrency: int = 2, ids: str = "") -> int:
               source_root / "app/agent/nodes/specialist.py", source_root / "app/agent/nodes/gate.py",
               source_root / "app/rag/legal_coverage.py", source_root / "data/kb/legal_checks.json",
               source_root / "app/rag/client.py", source_root / "app/core/config.py"]
+    inputs.append(source_root / "app/agent/rules/legal_guards.py")
     input_hashes = {path.relative_to(source_root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                     for path in inputs}
     sem = asyncio.Semaphore(concurrency)
@@ -168,6 +169,7 @@ async def run(output: Path, concurrency: int = 2, ids: str = "") -> int:
         "inference_policy": {"allowed_models": settings.llm_allowed_models,
                              "http_trust_env": settings.llm_http_trust_env,
                              "brief_disable_thinking": settings.llm_brief_disable_thinking},
+        "brief_reasoning_effort": settings.llm_brief_reasoning_effort,
         "models": {"review_and_judge": settings.llm_review_model,
                    "completeness_and_gate": settings.llm_review_model},
         "case_count": len(rows), "passed": passed, "failed": len(rows) - passed,

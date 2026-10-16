@@ -5,6 +5,7 @@
 import json
 
 from app.agent.prompts import load_prompt
+from app.agent.rules.legal_guards import legal_conclusion_errors
 from app.agent.state import ReviewState
 from app.core.config import get_settings
 from app.rag.client import get_sf_client
@@ -56,7 +57,7 @@ async def _llm_check(point: dict, chunk: str, evidence_context: str = "") -> boo
         return False
 
 
-async def _retry_fix(point: dict, chunk: str, risk_dim: str, evidence_context: str = "") -> dict | None:
+async def _retry_fix(point: dict, chunk: str, risk_dim: str, evidence_context: str = "", issues: list[str] | None = None) -> dict | None:
     """纠错重试：把质检错误反馈给 LLM 重新生成。"""
     try:
         sf = get_sf_client()
@@ -66,6 +67,7 @@ async def _retry_fix(point: dict, chunk: str, risk_dim: str, evidence_context: s
                 {"role": "user", "content": json.dumps({
                     "clause": chunk, "risk_dim": risk_dim, "previous": point,
                     "evidence_context": evidence_context,
+                    "issues": issues or [],
                 }, ensure_ascii=False)},
             ],
             model=settings.llm_review_model,
@@ -93,12 +95,14 @@ async def gate_node(state: ReviewState) -> dict:
         for point in output.get("result", []):
             chunk = state["chunks"][output["chunk_index"]]
             evidence_context = output.get("evidence_context", "")
-            point_errors = _rule_check(point, chunk)
-            llm_ok = await _llm_check(point, chunk, evidence_context)
+            point_errors = _rule_check(point, chunk) + legal_conclusion_errors(point, chunk, evidence_context)
+            llm_ok = not point_errors and await _llm_check(point, chunk, evidence_context)
             if point_errors or not llm_ok:
                 # 纠错重试一次
-                fixed = await _retry_fix(point, chunk, output["risk_dim"], evidence_context)
-                if fixed and not _rule_check(fixed, chunk) and await _llm_check(fixed, chunk, evidence_context):
+                fixed = await _retry_fix(point, chunk, output["risk_dim"], evidence_context, point_errors)
+                if (fixed and not _rule_check(fixed, chunk)
+                        and not legal_conclusion_errors(fixed, chunk, evidence_context)
+                        and await _llm_check(fixed, chunk, evidence_context)):
                     # 修复阶段没有重新检索，不能凭空增加未经专家阶段核验的引用。
                     refs = fixed.get("evidence_refs", [])
                     allowed = point.get("evidence_refs", [])
