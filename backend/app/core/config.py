@@ -45,9 +45,10 @@ class Settings(BaseSettings):
     # Agent 推理：DeepSeek 官方 OpenAI-compatible API
     llm_base_url: str = "https://api.deepseek.com"
     llm_api_key: str = ""
-    llm_review_model: str = "deepseek-v4-pro"
+    llm_review_model: str = "deepseek-flash"
     llm_chat_model: str = "deepseek-flash"
     llm_intent_model: str = "deepseek-flash"
+    llm_allowed_models: str = ""  # 可选逗号分隔白名单，限制推理成本；不约束向量/精排
 
     # RAG 向量化：阿里云百炼 OpenAI-compatible Embedding API
     embedding_base_url: str = ""

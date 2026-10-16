@@ -17,7 +17,12 @@ from app.agent.nodes.gate import gate_node
 from app.agent.nodes.specialist import _run_specialist
 from app.agent.prompts import load_prompt
 from app.core.config import get_settings
-from app.rag.client import get_sf_client, is_provider_access_error
+from app.rag.client import (
+    get_sf_client,
+    is_provider_access_error,
+    provider_error_code,
+    provider_status_code,
+)
 from app.rag.context import assemble_context
 from app.rag.eval.critical_cases import CRITICAL_CASES
 from app.rag.legal_coverage import check_coverage, matching_profiles
@@ -53,7 +58,8 @@ async def run(output: Path, concurrency: int = 2, ids: str = "") -> int:
     source_root = Path(__file__).resolve().parents[1]
     inputs = [*sorted((source_root / "app/agent/prompts").rglob("*.md")),
               source_root / "app/agent/nodes/specialist.py", source_root / "app/agent/nodes/gate.py",
-              source_root / "app/rag/legal_coverage.py", source_root / "data/kb/legal_checks.json"]
+              source_root / "app/rag/legal_coverage.py", source_root / "data/kb/legal_checks.json",
+              source_root / "app/rag/client.py", source_root / "app/core/config.py"]
     input_hashes = {path.relative_to(source_root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                     for path in inputs}
     sem = asyncio.Semaphore(concurrency)
@@ -89,7 +95,7 @@ async def run(output: Path, concurrency: int = 2, ids: str = "") -> int:
                 expert = await asyncio.wait_for(
                     _run_specialist(asyncio.Semaphore(1), case.clause, case.risk_dim, state, rag), 240,
                 )
-                if any(f"HTTP{status}" in error for error in expert["diagnostics"] for status in (401, 402, 403)):
+                if expert.get("provider_unavailable"):
                     stopped.set()
                     row["errors"] = expert["diagnostics"]
                     raise RuntimeError("Provider unavailable; evaluation stopped")
@@ -133,7 +139,8 @@ async def run(output: Path, concurrency: int = 2, ids: str = "") -> int:
                     row["evaluation_status"] = "blocked_provider"
                 row["exception"] = type(exc).__name__
                 row["failed_stage"] = stage
-                row["http_status"] = getattr(exc, "status_code", None)
+                row["http_status"] = provider_status_code(exc)
+                row["provider_error_code"] = provider_error_code(exc)
             row["elapsed_seconds"] = round(time.perf_counter() - tick, 2)
             with (checkpoints / f"{case.id}.json").open("x", encoding="utf-8") as handle:
                 json.dump(row, handle, ensure_ascii=False, indent=2)
@@ -158,6 +165,9 @@ async def run(output: Path, concurrency: int = 2, ids: str = "") -> int:
         "case_set_sha256": hashlib.sha256(json.dumps([asdict(c) for c in cases],
                                                     ensure_ascii=False, sort_keys=True).encode()).hexdigest(),
         "input_sha256": input_hashes,
+        "inference_policy": {"allowed_models": settings.llm_allowed_models,
+                             "http_trust_env": settings.llm_http_trust_env,
+                             "brief_disable_thinking": settings.llm_brief_disable_thinking},
         "models": {"review_and_judge": settings.llm_review_model,
                    "completeness_and_gate": settings.llm_review_model},
         "case_count": len(rows), "passed": passed, "failed": len(rows) - passed,

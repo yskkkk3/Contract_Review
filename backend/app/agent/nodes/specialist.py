@@ -14,7 +14,12 @@ from app.agent.state import ReviewState
 from app.agent.tools.executor import call_llm_with_tools
 from app.agent.tools.registry import default_tools
 from app.core.config import get_settings
-from app.rag.client import _extract_json, get_sf_client, is_provider_access_error
+from app.rag.client import (
+    _extract_json,
+    get_sf_client,
+    is_provider_access_error,
+    provider_status_code,
+)
 from app.rag.service import RAGService
 
 settings = get_settings()
@@ -189,12 +194,13 @@ async def _run_specialist(
                     points = _parse_risk_points(retry)
                     if not points and (_extract_json(retry) or {}).get("risk_points") != []:
                         diagnostics.append("专家未返回有效审阅JSON，不能作为无风险结论")
-                except Exception:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001
+                    provider_unavailable = is_provider_access_error(exc)
                     points = []
                     diagnostics.append("专家降级重试失败，审阅未完成")
         except Exception as exc:  # noqa: BLE001 故障隔离：LLM 调用失败不拖垮整体
             provider_unavailable = is_provider_access_error(exc)
-            status = f" HTTP{exc.status_code}" if provider_unavailable else ""
+            status = f" HTTP{provider_status_code(exc)}" if provider_unavailable else ""
             diagnostics.append(f"specialist[{risk_dim}] failed: {type(exc).__name__}{status}")
             # 兜底：无模型结果，返回空（错误已记录）
             points = []
@@ -234,6 +240,7 @@ async def _run_specialist(
                     audit_status = "invalid"
                     diagnostics.append("完整性复核未返回有效结果")
             except Exception as exc:  # noqa: BLE001 审阅意见保留，但不能声称完整性已验证
+                provider_unavailable = provider_unavailable or is_provider_access_error(exc)
                 audit_status = "failed"
                 diagnostics.append(f"完整性复核未完成：{type(exc).__name__}")
         if points:
@@ -252,6 +259,7 @@ async def _run_specialist(
             "diagnostics": diagnostics,
             "initial_result": initial_points, "audit_status": audit_status,
             "audit_unresolved": audit_unresolved,
+            "provider_unavailable": provider_unavailable,
         }
 
 

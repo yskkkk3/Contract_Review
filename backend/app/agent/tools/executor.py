@@ -65,6 +65,8 @@ async def _run_tool(
         text, doc_ids = await tool.handler(args, ctx)
         ok = True
     except Exception as exc:  # noqa: BLE001 工具异常回喂模型，允许其换参重试
+        if is_provider_access_error(exc):
+            raise
         text, doc_ids, ok = f"（工具执行失败：{exc}）", [], False
     ms = int((time.monotonic() - start) * 1000)
     if len(text) > settings.tool_result_max_chars:

@@ -128,6 +128,22 @@ async def test_tool_error_fed_back():
     assert "工具执行失败" in client.calls[1]["messages"][-1]["content"]
 
 
+async def test_tool_billing_failure_stops_before_another_model_round():
+    import httpx
+    import pytest
+
+    async def unavailable(args, ctx):
+        response = httpx.Response(400, json={"code": "Arrearage"},
+                                  request=httpx.Request("POST", "https://example.org/reranks"))
+        raise httpx.HTTPStatusError("billing unavailable", request=response.request, response=response)
+
+    tool = Tool(name="billing_tool", description="test", parameters={"type": "object", "properties": {}}, handler=unavailable)
+    client = ScriptedClient([FakeMessage(tool_calls=[FakeToolCall("c1", "billing_tool", "{}")])])
+    with pytest.raises(httpx.HTTPStatusError):
+        await call_llm_with_tools(client, [], [tool], model="m")
+    assert len(client.calls) == 1
+
+
 # ---------- 结果截断 ----------
 async def test_tool_result_truncation(monkeypatch):
     monkeypatch.setattr(get_settings(), "tool_result_max_chars", 50)

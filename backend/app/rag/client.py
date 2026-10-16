@@ -15,9 +15,29 @@ from app.core.config import get_settings
 settings = get_settings()
 
 
+def provider_status_code(exc: Exception) -> int | None:
+    """兼容OpenAI SDK与HTTPX供应商扩展接口的状态码。"""
+    return getattr(exc, "status_code", None) or getattr(getattr(exc, "response", None), "status_code", None)
+
+
+def provider_error_code(exc: Exception) -> str | None:
+    body = getattr(exc, "body", None)
+    if not isinstance(body, dict):
+        response = getattr(exc, "response", None)
+        try:
+            body = response.json() if response is not None else None
+        except ValueError:
+            body = None
+    if isinstance(body, dict):
+        error = body.get("error", body)
+        if isinstance(error, dict) and isinstance(error.get("code"), str):
+            return error["code"]
+    return None
+
+
 def is_provider_access_error(exc: Exception) -> bool:
     """认证、余额或权限失败不能通过换输出格式重试来恢复。"""
-    return getattr(exc, "status_code", None) in {401, 402, 403}
+    return provider_status_code(exc) in {401, 402, 403} or provider_error_code(exc) == "Arrearage"
 
 
 def _extract_json(raw: str) -> dict | None:
@@ -49,6 +69,9 @@ class LLMClient:
         self.rerank_url = settings.effective_rerank_url
         self.rerank_api_key = settings.effective_rerank_api_key
         self.timeout = 120.0
+        self._allowed_models = {
+            item.strip() for item in settings.llm_allowed_models.split(",") if item.strip()
+        }
         self._openai = AsyncOpenAI(
             base_url=self.base_url,
             api_key=self.api_key,
@@ -79,6 +102,12 @@ class LLMClient:
             extra.setdefault("cache_prompt", True)
             kwargs["extra_body"] = extra
         return kwargs
+
+    def _checked_model(self, model: str) -> str:
+        """所有推理入口在发送请求前检查，格式降级也不能越过成本限制。"""
+        if self._allowed_models and model not in self._allowed_models:
+            raise ValueError(f"Inference model {model!r} is not in LLM_ALLOWED_MODELS")
+        return model
 
     def _task_options(self, kwargs: dict, brief: bool) -> dict:
         """短结构化任务不应把输出预算全部消耗在 DeepSeek thinking 中。"""
@@ -120,7 +149,7 @@ class LLMClient:
         brief: bool = False,
         **kwargs: Any,
     ) -> str:
-        model = model or settings.llm_review_model
+        model = self._checked_model(model or settings.llm_review_model)
         async with self._sem:
             resp = await self._openai.chat.completions.create(
                 model=model,
@@ -145,7 +174,7 @@ class LLMClient:
 
         调用方负责工具循环（见 app/agent/tools/executor.py）。
         """
-        model = model or settings.llm_review_model
+        model = self._checked_model(model or settings.llm_review_model)
         async with self._sem:
             resp = await self._openai.chat.completions.create(
                 model=model,
@@ -173,7 +202,7 @@ class LLMClient:
         供应商不支持 strict json_schema 时回退普通 chat + 正则提取 JSON；
         解析失败返回 None，由调用方降级。
         """
-        model = model or settings.llm_intent_model
+        model = self._checked_model(model or settings.llm_intent_model)
         try:
             async with self._sem:
                 resp = await self._openai.chat.completions.create(
@@ -216,7 +245,7 @@ class LLMClient:
 
         供非增量场景（gate/arbitration）复用流式通道，顺带统计 token。
         """
-        model = model or settings.llm_chat_model
+        model = self._checked_model(model or settings.llm_chat_model)
         full: list[str] = []
         usage: dict = {}
         kwargs.setdefault("stream_options", {"include_usage": True})
@@ -244,7 +273,7 @@ class LLMClient:
         调用方传 stream_options={"include_usage": True} 时，末尾会收到 usage chunk
         （无 content），由调用方统计；生成器本身只产出增量文本。
         """
-        model = model or settings.llm_chat_model
+        model = self._checked_model(model or settings.llm_chat_model)
         async with self._sem:
             stream = await self._openai.chat.completions.create(
                 model=model,
@@ -261,7 +290,7 @@ class LLMClient:
 
         供需要 TTFT / token 统计的流式链路（chat_service）使用。
         """
-        model = model or settings.llm_chat_model
+        model = self._checked_model(model or settings.llm_chat_model)
         kwargs.setdefault("stream_options", {"include_usage": True})
         async with self._sem:
             stream = await self._openai.chat.completions.create(
