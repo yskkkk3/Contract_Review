@@ -147,6 +147,25 @@ async def test_brief_other_providers_receive_no_deepseek_options(monkeypatch, fa
 
 
 @pytest.mark.asyncio
+async def test_structured_billing_failure_does_not_retry_as_format_fallback(monkeypatch, fake_openai):
+    client = LLMClient()
+    calls = 0
+
+    class BillingError(Exception):
+        status_code = 402
+
+    async def fail(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise BillingError("balance unavailable")
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", fail)
+    with pytest.raises(BillingError):
+        await client.chat_structured([], json_schema={"type": "object"})
+    assert calls == 1
+
+
+@pytest.mark.asyncio
 async def test_embed_uses_independent_embedding_client(monkeypatch, fake_openai):
     client = LLMClient()
     captured = {}

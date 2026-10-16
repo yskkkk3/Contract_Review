@@ -14,12 +14,33 @@ from app.agent.state import ReviewState
 from app.agent.tools.executor import call_llm_with_tools
 from app.agent.tools.registry import default_tools
 from app.core.config import get_settings
-from app.rag.client import get_sf_client
+from app.rag.client import _extract_json, get_sf_client, is_provider_access_error
 from app.rag.service import RAGService
 
 settings = get_settings()
 
 MAX_REACT_ROUNDS = 3
+
+AUDIT_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "properties": {
+        "status": {"type": "string", "enum": ["complete", "revised", "incomplete"]},
+        "unresolved": {"type": "array", "items": {"type": "string"}},
+        "risk_points": {
+            "type": "array", "items": {
+                "type": "object", "additionalProperties": False,
+                "properties": {
+                    "original_content": {"type": "string"}, "risk_analysis": {"type": "string"},
+                    "risk_level": {"type": "string", "enum": ["高", "中", "低"]},
+                    "suggested_content": {"type": "string"},
+                    "evidence_refs": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["original_content", "risk_analysis", "risk_level", "suggested_content", "evidence_refs"],
+            },
+        },
+    },
+    "required": ["status", "unresolved", "risk_points"],
+}
 
 def _normalize_level(level: str) -> str:
     """多供应商字段漂移归一化：high→高 / medium→中 / low→低。"""
@@ -106,6 +127,7 @@ async def _run_specialist(
         )
         if dim_prompt:
             system += f"\n\n【{risk_dim}审阅细则】\n{dim_prompt}"
+        system += "\n\n" + load_prompt("legal_evidence")
 
         contract_content = "\n".join(state["chunks"])
 
@@ -113,7 +135,13 @@ async def _run_specialist(
             "rag": rag,
             "contract_content": contract_content,
             "clauses": state["chunks"],
+            "evidence_seen": [],
         }
+        supplement = rag.legal_supplement(chunk, risk_dim) if isinstance(rag, RAGService) else None
+        if supplement:
+            ctx["evidence_seen"].extend(supplement.evidence)
+        diagnostics: list[str] = []
+        provider_unavailable = False
 
         user_msg = (
             f"【合同条款】\n{chunk}\n\n"
@@ -122,6 +150,14 @@ async def _run_specialist(
             "\"risk_level\": \"高|中|低\", \"suggested_content\": \"修改建议\", \"evidence_refs\": [\"引用的文档id\"]}]}\n"
             "若该条款在本维度无风险，输出 {\"risk_points\": []}。"
         )
+        background = [
+            {"clause_index": index, "text": clause[:600]}
+            for index, clause in enumerate(state["chunks"])
+            if any(word in clause for word in ("甲方", "乙方", "财政", "资金", "签订日期", "事业单位", "中小企业"))
+        ][:4]
+        user_msg += "\n【合同背景摘录，其他条款可按索引补查】\n" + json.dumps(background, ensure_ascii=False)
+        if supplement and supplement.text:
+            user_msg += "\n【关键规则及关联条件补查】\n" + supplement.text
 
         messages = [
             {"role": "system", "content": system},
@@ -129,7 +165,7 @@ async def _run_specialist(
         ]
 
         # 仅保留模型实际引用且本轮真实检索到的文档，不把全部命中回填为依据。
-        retrieved_doc_ids: set[str] = set()
+        retrieved_doc_ids: set[str] = {item.chunk.doc_id for item in ctx["evidence_seen"]}
         try:
             text, tool_log = await call_llm_with_tools(
                 sf,
@@ -137,7 +173,7 @@ async def _run_specialist(
                 default_tools(),
                 model=settings.llm_review_model,
                 temperature=0.2,
-                max_tokens=2048,
+                max_tokens=settings.agent_review_max_tokens,
                 context=ctx,
             )
             retrieved_doc_ids.update(doc_id for rec in tool_log if rec.ok for doc_id in rec.doc_ids)
@@ -146,21 +182,63 @@ async def _run_specialist(
             for p in points:
                 if not p.get("original_content"):
                     p["original_content"] = chunk[:2000]
-            if not points:
+            if not points and (_extract_json(text) or {}).get("risk_points") != []:
                 # 未解析出风险点 → 检索证据后再试（降级路径）
                 evidence_ctx, evidence = await rag.search_with_context(chunk, risk_dim=risk_dim, top_k=3)
                 retrieved_doc_ids.update(e.chunk.doc_id for e in evidence)
+                ctx["evidence_seen"].extend(evidence)
                 messages.append({"role": "user", "content": f"【检索证据】\n{evidence_ctx}\n\n请据此重新输出审阅结果 JSON。"})
                 try:
-                    retry = await sf.chat(messages, model=settings.llm_review_model, temperature=0.2, max_tokens=2048)
+                    retry = await sf.chat(messages, model=settings.llm_review_model, temperature=0.2,
+                                          max_tokens=settings.agent_review_max_tokens, brief=True)
                     points = _parse_risk_points(retry)
+                    if not points and (_extract_json(retry) or {}).get("risk_points") != []:
+                        diagnostics.append("专家未返回有效审阅JSON，不能作为无风险结论")
                 except Exception:  # noqa: BLE001
                     points = []
+                    diagnostics.append("专家降级重试失败，审阅未完成")
         except Exception as exc:  # noqa: BLE001 故障隔离：LLM 调用失败不拖垮整体
-            state.setdefault("errors", []).append(f"specialist[{risk_dim}] llm error: {exc}")
+            provider_unavailable = is_provider_access_error(exc)
+            status = f" HTTP{exc.status_code}" if provider_unavailable else ""
+            diagnostics.append(f"specialist[{risk_dim}] failed: {type(exc).__name__}{status}")
             # 兜底：无模型结果，返回空（错误已记录）
             points = []
 
+        initial_points = [dict(point) for point in points]
+        audit_status = "not_run"
+        if isinstance(rag, RAGService):
+            supplement = rag.legal_supplement(chunk, risk_dim, ctx["evidence_seen"])
+        if (supplement and supplement.coverage.facets and settings.agent_evidence_audit_enabled
+                and not provider_unavailable):
+            try:
+                audit = await asyncio.wait_for(sf.chat_structured(
+                    [
+                        {"role": "system", "content": load_prompt("review_completeness")},
+                        {"role": "user", "content": json.dumps({
+                            "clause": chunk, "risk_dim": risk_dim, "background": background,
+                            "evidence_context": supplement.text, "draft": points,
+                        }, ensure_ascii=False)},
+                    ],
+                    json_schema=AUDIT_SCHEMA, model=settings.llm_review_model,
+                    temperature=0, max_tokens=settings.agent_review_max_tokens,
+                ), timeout=settings.agent_evidence_audit_timeout)
+                if (isinstance(audit, dict) and audit.get("status") in {"complete", "revised", "incomplete"}
+                        and isinstance(audit.get("risk_points"), list)
+                        and isinstance(audit.get("unresolved"), list)
+                        and all(isinstance(item, str) for item in audit["unresolved"])):
+                    audited_points = _parse_risk_points(json.dumps(audit, ensure_ascii=False))
+                    if len(audited_points) != len(audit["risk_points"]):
+                        raise ValueError("Invalid audited risk points")
+                    points = audited_points
+                    audit_status = audit["status"]
+                    if audit["status"] == "incomplete" or audit["unresolved"]:
+                        diagnostics.append("完整性复核仍有关键依据或材料待核实")
+                else:
+                    audit_status = "invalid"
+                    diagnostics.append("完整性复核未返回有效结果")
+            except Exception as exc:  # noqa: BLE001 审阅意见保留，但不能声称完整性已验证
+                audit_status = "failed"
+                diagnostics.append(f"完整性复核未完成：{type(exc).__name__}")
         if points:
             for p in points:
                 refs = [
@@ -169,22 +247,13 @@ async def _run_specialist(
                 ]
                 p["evidence_refs"] = list(dict.fromkeys(refs))[:5]
 
-            # 流式推送：单个专家任务完成即推 SSE（LangGraph custom stream mode）
-            try:
-                from langgraph.config import get_stream_writer
-
-                get_stream_writer()(
-                    {
-                        "type": "risk_point",
-                        "risk_dim": risk_dim,
-                        "points": points,
-                    }
-                )
-            except Exception:  # noqa: BLE001 writer 不可用时静默降级（非流式上下文）
-                pass
-            return {"chunk_index": state["chunks"].index(chunk), "risk_dim": risk_dim, "result": points}
-
-        return {"chunk_index": state["chunks"].index(chunk), "risk_dim": risk_dim, "result": []}
+        return {
+            "chunk_index": state["chunks"].index(chunk), "risk_dim": risk_dim, "result": points,
+            "evidence_context": supplement.text if supplement else "",
+            "coverage_issues": supplement.coverage.missing if supplement else [],
+            "diagnostics": diagnostics,
+            "initial_result": initial_points, "audit_status": audit_status,
+        }
 
 
 async def specialist_node(state: ReviewState, rag: RAGService) -> dict:
@@ -196,4 +265,9 @@ async def specialist_node(state: ReviewState, rag: RAGService) -> dict:
         for dim in r["risk_dims"]
     ]
     outputs = await asyncio.gather(*tasks)
-    return {"specialist_outputs": outputs}
+    errors = list(state.get("errors", []))
+    for output in outputs:
+        errors.extend(output.get("diagnostics", []))
+        if output.get("coverage_issues"):
+            errors.append(f"{output['risk_dim']}关键依据未完整覆盖：{', '.join(output['coverage_issues'])}")
+    return {"specialist_outputs": outputs, "errors": errors}

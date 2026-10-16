@@ -7,8 +7,8 @@ from qdrant_client import AsyncQdrantClient
 from app.core.config import get_settings
 from app.core.qdrant import create_qdrant_client
 from app.rag.client import get_sf_client
-from app.rag.context import build_context
 from app.rag.ingest.loader import ensure_collection
+from app.rag.legal_coverage import LegalContext, legal_context
 from app.rag.query_expansion import expand_query
 from app.rag.rerank import rerank_chunks, rerank_evidence
 from app.rag.retrievers.hybrid import HybridRetriever, RetrievedChunk, chunk_key, fuse_rankings
@@ -130,9 +130,27 @@ class RAGService:
         query: str,
         risk_dim: str | None = None,
         top_k: int = 5,
+        doc_type: str | None = None,
     ) -> tuple[str, list[RetrievedChunk]]:
-        evidence = await self.search(query, risk_dim=risk_dim, top_k=top_k)
-        return build_context(evidence), evidence
+        evidence = await self.search(query, risk_dim=risk_dim, top_k=top_k, doc_type=doc_type)
+        if doc_type == "template":
+            from app.rag.context import assemble_context
+
+            assembled = assemble_context(evidence, self._context_budget())
+            return assembled.text, assembled.visible
+        bundle = self.legal_supplement(query, risk_dim, evidence)
+        return bundle.text or "（未检索到相关制度/法规依据）", bundle.evidence
+
+    @staticmethod
+    def _context_budget() -> int:
+        return max(200, min(settings.rag_context_max_chars, settings.tool_result_max_chars - 200))
+
+    def legal_supplement(
+        self, query: str, risk_dim: str | None = None,
+        retrieved: list[RetrievedChunk] | None = None,
+    ) -> LegalContext:
+        """仅从已加载索引取关键条件与例外，缺失时返回明确覆盖缺口。"""
+        return legal_context(query, risk_dim, self.bm25, retrieved, self._context_budget())
 
     async def close(self) -> None:
         await self.qdrant.close()

@@ -16,9 +16,10 @@ import logging
 import time
 from typing import Any
 
+from app.agent.prompts import load_prompt
 from app.agent.tools.registry import Tool, ToolContext, tool_schemas
 from app.core.config import get_settings
-from app.rag.client import LLMClient
+from app.rag.client import LLMClient, is_provider_access_error
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,10 @@ async def call_llm_with_tools(
                 for tc in tool_calls
             ],
         }
+        reasoning = getattr(message, "reasoning_content", None)
+        if isinstance(reasoning, str):
+            # DeepSeek thinking工具轮次需要原样回传；只发给模型，不发给前端。
+            assistant_payload["reasoning_content"] = reasoning
         loop_messages.append(assistant_payload)
         for tc, (text, record) in zip(tool_calls, results, strict=True):
             records.append(record)
@@ -139,14 +144,16 @@ async def call_llm_with_tools(
     loop_messages.append(
         {
             "role": "user",
-            "content": "你已多次调用工具。请仅基于以上工具结果直接输出最终答案（严格按要求的 JSON 格式，禁止再调用任何工具）。",
+            "content": load_prompt("tool_convergence"),
         }
     )
     try:
         final_message = await client.chat(
-            loop_messages, model=model, temperature=temperature, max_tokens=max_tokens
+            loop_messages, model=model, temperature=temperature, max_tokens=max_tokens, brief=True,
         )
         return final_message or "", records
     except Exception as exc:  # noqa: BLE001
+        if is_provider_access_error(exc):
+            raise
         logger.warning("final convergence chat failed: %s", exc)
         return "", records

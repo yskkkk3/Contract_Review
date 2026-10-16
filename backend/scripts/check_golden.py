@@ -13,8 +13,10 @@ from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.agent.state import RISK_DIMS
+from app.rag.eval.critical_cases import CRITICAL_CASES
 from app.rag.eval.golden_set import GOLDEN_SET
 from app.rag.ingest.corpus import load_corpus
+from scripts.check_critical import check_critical
 
 KNOWN_RISK_DIMS = set(RISK_DIMS) | {""}
 DATA_DIR = Path(__file__).resolve().parents[1] / "data" / "kb"
@@ -38,6 +40,7 @@ def check_corpus(data_dir: Path) -> list[str]:
         "verified_at", "articles", "scope", "content_kind",
     }
     qrels = {title for case in GOLDEN_SET for title in case.relevant_docs}
+    qrels.update(title for case in CRITICAL_CASES for title in case.required_docs)
     for relative, metadata in sources.items():
         path = (data_dir / relative).resolve()
         if not path.is_relative_to(data_dir.resolve()) or not path.is_file() or path.suffix != ".txt":
@@ -77,12 +80,13 @@ def main() -> int:
             errors.append(f"{case.id}: risk_dim '{case.risk_dim}' 不在已知维度集合")
 
     errors.extend(check_corpus(DATA_DIR))
+    errors.extend(check_critical(DATA_DIR))
     if errors:
         print("[gate] GOLDEN_SET 校验失败：")
         for e in errors:
             print(f"  - {e}")
         return 1
-    print(f"[gate] GOLDEN_SET 校验通过：{len(GOLDEN_SET)} 条（id 唯一、字段完整、维度合法、语料来源及 qrels 完整）")
+    print(f"[gate] GOLDEN_SET {len(GOLDEN_SET)} 条及关键场景 {len(CRITICAL_CASES)} 条校验通过（来源、qrels、条件/例外正文及展示完整）")
     return 0
 
 

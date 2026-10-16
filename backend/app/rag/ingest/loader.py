@@ -27,7 +27,7 @@ async def ensure_collection(client: AsyncQdrantClient, collection: str, vector_s
             vectors_config=models.VectorParams(size=vector_size, distance=models.Distance.COSINE),
         )
     # 元数据过滤索引（幂等：已存在时忽略错误）
-    for field in ("doc_type", "source"):
+    for field in ("doc_id", "doc_type", "source"):
         with suppress(Exception):
             await client.create_payload_index(
                 collection_name=collection,
@@ -65,3 +65,29 @@ async def upsert_chunks(client: AsyncQdrantClient, collection: str, chunks: list
         await client.upsert(collection_name=collection, points=points)
         count += len(points)
     return count
+
+
+async def replace_document_chunks(
+    client: AsyncQdrantClient, collection: str, chunks: list[Chunk], batch_size: int = 10,
+) -> int:
+    """新版本写入成功后清理同文档旧块，避免已纠正的法条仍参与召回。
+
+    只处理本次提供的文档和层级，不清空集合或删除其他文档；任何写入失败时不执行清理。
+    """
+    grouped: dict[tuple[str, str], list[Chunk]] = {}
+    for chunk in chunks:
+        grouped.setdefault((chunk.doc_id, chunk.doc_type), []).append(chunk)
+    total = 0
+    for (doc_id, doc_type), parts in grouped.items():
+        total += await upsert_chunks(client, collection, parts, batch_size)
+        keep = [_point_id(part.doc_id, part.text, part.section) for part in parts]
+        await client.delete(
+            collection_name=collection,
+            points_selector=models.FilterSelector(filter=models.Filter(
+                must=[models.FieldCondition(key="doc_id", match=models.MatchValue(value=doc_id)),
+                      models.FieldCondition(key="doc_type", match=models.MatchValue(value=doc_type))],
+                must_not=[models.HasIdCondition(has_id=keep)],
+            )),
+            wait=True,
+        )
+    return total

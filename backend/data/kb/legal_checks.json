@@ -1,0 +1,897 @@
+{
+  "version": "2026-10-16",
+  "profiles": [
+    {
+      "id": "procurement_scope",
+      "risk_dims": [
+        "主体资格与合规"
+      ],
+      "triggers": [
+        "采购",
+        "招标",
+        "财政",
+        "资金"
+      ],
+      "exclude": [],
+      "facts": [
+        "采购人法律性质、资金是否纳入预算管理、目录或限额、项目地区和采购时间"
+      ],
+      "facets": [
+        {
+          "id": "fiscal_scope",
+          "kind": "scope",
+          "document": "政府采购法·总则与适用范围",
+          "needles": [
+            "财政性资金",
+            "集中采购目录",
+            "采购限额标准"
+          ]
+        },
+        {
+          "id": "loan_and_emergency_exceptions",
+          "kind": "exception",
+          "document": "政府采购法·总则与适用范围",
+          "needles": [
+            "第84、85条",
+            "严重自然灾害",
+            "不得损害国家利益和社会公共利益"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sme_payment",
+      "risk_dims": [
+        "财务与付款",
+        "验收交付与质保"
+      ],
+      "triggers": [
+        "付款",
+        "支付",
+        "结算",
+        "预付",
+        "验收"
+      ],
+      "exclude": [],
+      "facts": [
+        "付款方是机关事业单位还是大型企业，供方订约时企业规模，合同日期，交付/验收/结算起算点"
+      ],
+      "facets": [
+        {
+          "id": "buyer_supplier_scope",
+          "kind": "scope",
+          "document": "保障中小企业款项支付条例·付款期限与验收（2025修订）",
+          "needles": [
+            "付款方",
+            "订约时",
+            "中小企业"
+          ]
+        },
+        {
+          "id": "payment_limit_difference",
+          "kind": "rule",
+          "document": "保障中小企业款项支付条例·付款期限与验收（2025修订）",
+          "needles": [
+            "机关、事业单位",
+            "30日",
+            "最长不得超过60日",
+            "大型企业",
+            "合理约定"
+          ]
+        },
+        {
+          "id": "acceptance_delay_and_special_rules",
+          "kind": "exception",
+          "document": "保障中小企业款项支付条例·付款期限与验收（2025修订）",
+          "needles": [
+            "拖延验收",
+            "期限届满",
+            "国家有关规定",
+            "双方确认结算金额"
+          ]
+        },
+        {
+          "id": "acceptance_clock_not_total_cap",
+          "kind": "exception",
+          "document": "保障中小企业款项支付条例·付款期限与验收（2025修订）",
+          "needles": [
+            "自验收合格起算",
+            "全部历时不得超过交付后60日",
+            "不等于验收自动合格"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sme_audit",
+      "risk_dims": [
+        "财务与付款",
+        "验收交付与质保"
+      ],
+      "triggers": [
+        "审计",
+        "保证金",
+        "保函",
+        "汇票",
+        "票据"
+      ],
+      "exclude": [],
+      "facts": [
+        "是否中小企业交易，审计机关审计还是合同结算审核，保证金类别与法定例外"
+      ],
+      "facets": [
+        {
+          "id": "audit_exception",
+          "kind": "exception",
+          "document": "保障中小企业款项支付条例·保证金与审计结算（2025修订）",
+          "needles": [
+            "审计机关",
+            "法律、行政法规另有规定除外"
+          ]
+        },
+        {
+          "id": "noncash_guarantee",
+          "kind": "rule",
+          "document": "保障中小企业款项支付条例·保证金与审计结算（2025修订）",
+          "needles": [
+            "不得限定现金",
+            "保函"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "software_commission",
+      "risk_dims": [
+        "知识产权与保密"
+      ],
+      "triggers": [
+        "软件",
+        "信息化",
+        "系统开发",
+        "源代码"
+      ],
+      "exclude": [],
+      "facts": [
+        "委托开发还是现有软件许可，是否已有书面权属约定，定制模块及既有组件范围"
+      ],
+      "facets": [
+        {
+          "id": "software_agreement_priority",
+          "kind": "scope",
+          "document": "计算机软件保护条例·委托开发与许可边界",
+          "needles": [
+            "第11条",
+            "书面合同",
+            "已明确约定"
+          ]
+        },
+        {
+          "id": "software_default",
+          "kind": "rule",
+          "document": "计算机软件保护条例·委托开发与许可边界",
+          "needles": [
+            "未明确约定",
+            "受托人享有"
+          ]
+        },
+        {
+          "id": "software_licence_limits",
+          "kind": "exception",
+          "document": "计算机软件保护条例·委托开发与许可边界",
+          "needles": [
+            "未明确许可的权利",
+            "不得行使"
+          ]
+        },
+        {
+          "id": "software_modification_not_general_work",
+          "kind": "scope",
+          "document": "计算机软件保护条例·委托开发与许可边界",
+          "needles": [
+            "第8、16条",
+            "软件修改权",
+            "必要修改"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "patent_development",
+      "risk_dims": [
+        "知识产权与保密"
+      ],
+      "triggers": [
+        "专利",
+        "发明",
+        "研发"
+      ],
+      "exclude": [],
+      "facts": [
+        "委托开发还是合作开发，是否另有权属约定或特别法律规定，客体是否发明创造"
+      ],
+      "facets": [
+        {
+          "id": "patent_article_and_default",
+          "kind": "rule",
+          "document": "民法典合同编·技术合同与知识产权",
+          "needles": [
+            "第八百五十九条",
+            "申请专利的权利属于研究开发人"
+          ]
+        },
+        {
+          "id": "patent_exceptions",
+          "kind": "exception",
+          "document": "民法典合同编·技术合同与知识产权",
+          "needles": [
+            "法律另有规定或者当事人另有约定",
+            "第八百六十条",
+            "共有"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "technology_secret",
+      "risk_dims": [
+        "知识产权与保密"
+      ],
+      "triggers": [
+        "技术秘密",
+        "专有技术"
+      ],
+      "exclude": [],
+      "facts": [
+        "成果是技术秘密还是已获专利方案，是否约定使用转让和收益，是否完成交付"
+      ],
+      "facets": [
+        {
+          "id": "secret_default",
+          "kind": "rule",
+          "document": "民法典合同编·技术合同与知识产权",
+          "needles": [
+            "第八百六十一条",
+            "当事人均有使用和转让权"
+          ]
+        },
+        {
+          "id": "secret_before_delivery",
+          "kind": "exception",
+          "document": "民法典合同编·技术合同与知识产权",
+          "needles": [
+            "交付成果之前",
+            "不得",
+            "第三人"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "commissioned_work",
+      "risk_dims": [
+        "知识产权与保密"
+      ],
+      "triggers": [
+        "委托创作",
+        "委托作品",
+        "设计成果",
+        "著作权"
+      ],
+      "exclude": [],
+      "facts": [
+        "成果是普通作品还是软件，是否已有合同约定，需许可还是转让及具体权利范围"
+      ],
+      "facets": [
+        {
+          "id": "work_default",
+          "kind": "rule",
+          "document": "著作权法·委托作品与许可转让",
+          "needles": [
+            "受托人",
+            "约定"
+          ]
+        },
+        {
+          "id": "work_licence",
+          "kind": "scope",
+          "document": "著作权法·委托作品与许可转让",
+          "needles": [
+            "许可",
+            "转让"
+          ]
+        },
+        {
+          "id": "ordinary_work_modification_not_transfer",
+          "kind": "scope",
+          "document": "著作权法·委托作品与许可转让",
+          "needles": [
+            "第3项修改权",
+            "第14项改编权",
+            "第5至17项"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "personal_delegation",
+      "risk_dims": [
+        "知识产权与保密"
+      ],
+      "triggers": [
+        "个人信息",
+        "人脸",
+        "健康",
+        "师生数据",
+        "学生数据"
+      ],
+      "exclude": [],
+      "facts": [
+        "委托处理还是独立或共同处理，是否有法定保存期限、技术删除障碍，退出后用途"
+      ],
+      "facets": [
+        {
+          "id": "processor_scope",
+          "kind": "scope",
+          "document": "个人信息保护法·委托处理与退出删除",
+          "needles": [
+            "第19、21",
+            "委托处理",
+            "监督"
+          ]
+        },
+        {
+          "id": "processor_exit",
+          "kind": "rule",
+          "document": "个人信息保护法·委托处理与退出删除",
+          "needles": [
+            "终止后须返还或删除",
+            "不能保留"
+          ]
+        },
+        {
+          "id": "retention_exception",
+          "kind": "exception",
+          "document": "个人信息保护法·委托处理与退出删除",
+          "needles": [
+            "第47条",
+            "保存期限未届满",
+            "停止除存储和采取必要安全保护措施之外的处理"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sensitive_basis",
+      "risk_dims": [
+        "知识产权与保密"
+      ],
+      "triggers": [
+        "敏感",
+        "人脸",
+        "生物识别",
+        "健康",
+        "未成年人"
+      ],
+      "exclude": [],
+      "facts": [
+        "敏感信息具体类型，个人是不是合同当事人，适用何种处理基础，必要性及影响评估"
+      ],
+      "facets": [
+        {
+          "id": "sensitive_protection",
+          "kind": "rule",
+          "document": "个人信息保护法·敏感信息与影响评估",
+          "needles": [
+            "充分必要性",
+            "影响评估"
+          ]
+        },
+        {
+          "id": "consent_exception",
+          "kind": "exception",
+          "document": "个人信息保护法·敏感信息与影响评估",
+          "needles": [
+            "第13条",
+            "不需取得个人同意"
+          ]
+        },
+        {
+          "id": "individual_contract_scope",
+          "kind": "scope",
+          "document": "个人信息保护法·敏感信息与影响评估",
+          "needles": [
+            "个人本人作为一方当事人",
+            "不是学校与供应商"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "liquidated_damages",
+      "risk_dims": [
+        "违约责任与解除"
+      ],
+      "triggers": [
+        "违约金",
+        "罚金",
+        "逾期费"
+      ],
+      "exclude": [],
+      "facts": [
+        "造成的损失而非合同金额，是否提出调整请求及举证，有无恶意违约、履行与过错事实"
+      ],
+      "facets": [
+        {
+          "id": "loss_basis",
+          "kind": "scope",
+          "document": "合同编通则司法解释·违约金调整",
+          "needles": [
+            "损失",
+            "30%",
+            "不是合同金额上限"
+          ]
+        },
+        {
+          "id": "adjustment_and_badfaith",
+          "kind": "exception",
+          "document": "合同编通则司法解释·违约金调整",
+          "needles": [
+            "反诉或抗辩",
+            "举证",
+            "恶意违约"
+          ]
+        },
+        {
+          "id": "adjustment_not_invalidity",
+          "kind": "rule",
+          "document": "民法典合同编·违约责任与定金",
+          "needles": [
+            "第五百八十五条",
+            "当事人的请求",
+            "适当减少"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "force_majeure",
+      "risk_dims": [
+        "违约责任与解除"
+      ],
+      "triggers": [
+        "不可抗力",
+        "疫情",
+        "上游",
+        "供应链"
+      ],
+      "exclude": [],
+      "facts": [
+        "事件对履行的实际因果影响，是否已经迟延，通知与证明，损失扩大及合同目的"
+      ],
+      "facets": [
+        {
+          "id": "impact_and_notice",
+          "kind": "rule",
+          "document": "民法典合同编·违约责任与定金",
+          "needles": [
+            "第五百九十条",
+            "实际影响",
+            "及时通知",
+            "提供证明"
+          ]
+        },
+        {
+          "id": "late_performance_exception",
+          "kind": "exception",
+          "document": "民法典合同编·违约责任与定金",
+          "needles": [
+            "迟延履行后",
+            "不免除违约责任"
+          ]
+        },
+        {
+          "id": "third_party_and_mitigation",
+          "kind": "scope",
+          "document": "民法典合同编·违约责任与定金",
+          "needles": [
+            "第五百九十一条",
+            "第五百九十三条",
+            "第三人原因"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "court_jurisdiction",
+      "risk_dims": [
+        "争议解决与管辖"
+      ],
+      "triggers": [
+        "法院",
+        "管辖",
+        "诉讼"
+      ],
+      "exclude": [],
+      "facts": [
+        "是否涉外，书面协议、实际联系、级别及专属管辖，不能只凭学校所在地推断"
+      ],
+      "facets": [
+        {
+          "id": "domestic_actual_connection",
+          "kind": "rule",
+          "document": "民事诉讼法·协议管辖与实际联系（2023修正）",
+          "needles": [
+            "第35条",
+            "实际联系",
+            "专属管辖"
+          ]
+        },
+        {
+          "id": "foreign_special_rule",
+          "kind": "exception",
+          "document": "民事诉讼法·协议管辖与实际联系（2023修正）",
+          "needles": [
+            "第277条",
+            "涉外",
+            "不要求争议与我国必须有实际联系"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "arbitration",
+      "risk_dims": [
+        "争议解决与管辖"
+      ],
+      "triggers": [
+        "仲裁",
+        "一裁终局"
+      ],
+      "exclude": [],
+      "facts": [
+        "合同及仲裁协议时间，普通国内还是第82条特定涉外情形，机构可确定性及补充约定"
+      ],
+      "facets": [
+        {
+          "id": "finality_and_agreement",
+          "kind": "rule",
+          "document": "仲裁法·仲裁协议与一裁终局（2025修订）",
+          "needles": [
+            "一裁终局",
+            "仲裁意思",
+            "可以补充"
+          ]
+        },
+        {
+          "id": "foreign_adhoc_exception",
+          "kind": "exception",
+          "document": "仲裁法·仲裁协议与一裁终局（2025修订）",
+          "needles": [
+            "第82条",
+            "涉外海事",
+            "三个工作日"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "data_record_retention",
+      "risk_dims": [
+        "知识产权与保密"
+      ],
+      "triggers": [
+        "处理记录",
+        "日志",
+        "3年",
+        "三年"
+      ],
+      "exclude": [],
+      "facts": [
+        "三年保存针对处理记录还是业务数据，是否另有法定保存要求，退出后的实际处理用途"
+      ],
+      "facets": [
+        {
+          "id": "record_three_years",
+          "kind": "rule",
+          "document": "网络数据安全管理条例·外包处理与安全事件",
+          "needles": [
+            "相关处理记录至少保留3年"
+          ]
+        },
+        {
+          "id": "records_not_all_data",
+          "kind": "exception",
+          "document": "网络数据安全管理条例·外包处理与安全事件",
+          "needles": [
+            "不能将3年记录保存误解为所有师生业务数据都须保存3年"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "confidential_information",
+      "risk_dims": [
+        "知识产权与保密"
+      ],
+      "triggers": [
+        "保密",
+        "商业秘密"
+      ],
+      "exclude": [],
+      "facts": [
+        "信息是否为谈判获知的商业秘密或其他应保密信息，是否不当使用或泄露，有无损害及合法披露依据"
+      ],
+      "facets": [
+        {
+          "id": "precontract_confidentiality",
+          "kind": "rule",
+          "document": "民法典合同编·保密与知识产权",
+          "needles": [
+            "第五百零一条",
+            "无论合同是否成立",
+            "商业秘密"
+          ]
+        },
+        {
+          "id": "separate_ip_defaults",
+          "kind": "scope",
+          "document": "民法典合同编·保密与知识产权",
+          "needles": [
+            "付款不当然转移全部知识产权",
+            "不能以“高校惯例”"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "contract_effectiveness",
+      "risk_dims": [
+        "主体资格与合规",
+        "争议解决与管辖"
+      ],
+      "triggers": [
+        "经营范围",
+        "报批",
+        "合同无效",
+        "合同未生效"
+      ],
+      "exclude": [],
+      "facts": [
+        "经营范围与许可资质不同，是否有生效审批手续，争议解决条款能否独立存在"
+      ],
+      "facets": [
+        {
+          "id": "business_scope_not_automatic_invalidity",
+          "kind": "exception",
+          "document": "民法典合同编·合同订立与效力要点",
+          "needles": [
+            "第五百零五条",
+            "不得仅以超越经营范围确认合同无效"
+          ]
+        },
+        {
+          "id": "approval_and_independent_dispute",
+          "kind": "scope",
+          "document": "民法典合同编·合同订立与效力要点",
+          "needles": [
+            "第五百零七条",
+            "不影响合同中有关解决争议方法",
+            "履行报批义务"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gov_contract_procedures",
+      "risk_dims": [
+        "主体资格与合规",
+        "财务与付款"
+      ],
+      "triggers": [
+        "备案",
+        "补充合同",
+        "合同公告",
+        "追加采购"
+      ],
+      "exclude": [],
+      "facts": [
+        "是否政府采购及地域，备案与公告受报部门和不同工作日，追加标的与累计金额，其他条款是否不变"
+      ],
+      "facets": [
+        {
+          "id": "filing_not_publication",
+          "kind": "rule",
+          "document": "政府采购法·合同签订与验收",
+          "needles": [
+            "第四十七条",
+            "七个工作日",
+            "第五十条",
+            "公共利益"
+          ]
+        },
+        {
+          "id": "addition_conditions",
+          "kind": "scope",
+          "document": "政府采购法·合同签订与验收",
+          "needles": [
+            "第四十九条",
+            "标的相同",
+            "不改变合同其他条款",
+            "百分之十"
+          ]
+        },
+        {
+          "id": "publication_time_and_secrets",
+          "kind": "exception",
+          "document": "实施条例·合同签订公告支付",
+          "needles": [
+            "第五十条",
+            "2个工作日",
+            "国家秘密、商业秘密"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gov_service_scope",
+      "risk_dims": [
+        "主体资格与合规",
+        "验收交付与质保"
+      ],
+      "triggers": [
+        "政府购买服务",
+        "服务期限",
+        "三年服务"
+      ],
+      "exclude": [],
+      "facts": [
+        "购买主体是否国家机关或参照主体，是否公益一类，指导目录与禁购事项，预算及连续稳定等期限例外条件"
+      ],
+      "facets": [
+        {
+          "id": "service_scope_not_all_colleges",
+          "kind": "scope",
+          "document": "政府购买服务管理办法",
+          "needles": [
+            "第2、5、8、10、33条",
+            "公益一类事业单位",
+            "不等同所有政府采购服务"
+          ]
+        },
+        {
+          "id": "one_year_three_year_exception",
+          "kind": "exception",
+          "document": "政府购买服务管理办法",
+          "needles": [
+            "第二十四条",
+            "预算保障",
+            "连续性强",
+            "不超过3年"
+          ]
+        },
+        {
+          "id": "service_subcontract_and_terms",
+          "kind": "rule",
+          "document": "政府购买服务管理办法",
+          "needles": [
+            "第二十三条",
+            "第二十六条",
+            "不得将服务项目转包"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "shenzhen_contract_version",
+      "risk_dims": [
+        "主体资格与合规",
+        "财务与付款"
+      ],
+      "triggers": [
+        "深圳",
+        "深大"
+      ],
+      "exclude": [],
+      "facts": [
+        "深圳特区规则的主体地域时间，签约/备案区别，货物或服务期限，补充采购审批及预算"
+      ],
+      "facets": [
+        {
+          "id": "shenzhen_deadlines_and_long_term",
+          "kind": "rule",
+          "document": "深圳条例·合同签订与数量调整",
+          "needles": [
+            "第三十七条",
+            "十个工作日",
+            "第三十八条",
+            "六个月"
+          ]
+        },
+        {
+          "id": "shenzhen_addition_and_budget",
+          "kind": "scope",
+          "document": "深圳条例·补充采购合同与备案",
+          "needles": [
+            "第四十条",
+            "主管部门批准",
+            "百分之十",
+            "原计划数额"
+          ]
+        },
+        {
+          "id": "shenzhen_filing_not_effectiveness",
+          "kind": "exception",
+          "document": "深圳条例·补充采购合同与备案",
+          "needles": [
+            "第五十四条",
+            "十日内",
+            "不把备案当作合同生效"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "legacy_agency_approval",
+      "risk_dims": [
+        "主体资格与合规"
+      ],
+      "triggers": [
+        "代理资格",
+        "代理机构资质",
+        "资格审批"
+      ],
+      "exclude": [],
+      "facts": [
+        "区分已取消的旧代理资格审批与现行委托权限、登记及违法责任"
+      ],
+      "facets": [
+        {
+          "id": "removed_agency_approval",
+          "kind": "exception",
+          "document": "政府采购法·法律责任",
+          "needles": [
+            "2014年修正",
+            "已删除旧版",
+            "代理资格审批"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "acceptance_payment_records",
+      "risk_dims": [
+        "验收交付与质保"
+      ],
+      "triggers": [
+        "验收",
+        "采购文件保存"
+      ],
+      "exclude": [],
+      "facts": [
+        "逐项验收和服务对象参与要求，采购文件留存与付款规则是不同法律条文"
+      ],
+      "facets": [
+        {
+          "id": "acceptance_and_electronic_archives",
+          "kind": "rule",
+          "document": "政府采购法实施条例·履约验收",
+          "needles": [
+            "第四十五条",
+            "第四十六条",
+            "电子档案"
+          ]
+        },
+        {
+          "id": "payment_not_record_retention",
+          "kind": "scope",
+          "document": "政府采购法实施条例·履约验收",
+          "needles": [
+            "第五十一条",
+            "十五年采购文件留存来自政府采购法第42条"
+          ]
+        }
+      ]
+    }
+  ]
+}

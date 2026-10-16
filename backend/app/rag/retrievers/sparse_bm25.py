@@ -60,6 +60,10 @@ class BM25Index:
         with open(path, "wb") as f:
             pickle.dump({"chunks": self._chunks, "corpus": self._corpus}, f)
 
+    def document_chunks(self, doc_id: str) -> list[Chunk]:
+        """保留入库顺序读取同一文档的条文，供关键条件补查；不读取上传合同。"""
+        return [chunk for chunk in self._chunks if chunk.doc_id == doc_id]
+
     @classmethod
     def load(cls, path: str | Path) -> "BM25Index":
         with open(path, "rb") as f:

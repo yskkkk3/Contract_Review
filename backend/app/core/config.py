@@ -82,6 +82,7 @@ class Settings(BaseSettings):
     rag_evidence_rerank_enabled: bool = True
     rag_evidence_rerank_docs: int = 30  # cross-encoder 后复核的最大文档数
     rag_evidence_rerank_timeout: float = 20.0
+    rag_context_max_chars: int = 7000
 
     # langfuse
     langfuse_public_key: str = ""
@@ -125,6 +126,9 @@ class Settings(BaseSettings):
     # Agent 工具调用（Tool Calling）
     agent_tool_calling_enabled: bool = True
     agent_max_tool_iterations: int = 3  # 工具循环轮次上限（防死循环）
+    agent_review_max_tokens: int = 4096
+    agent_evidence_audit_enabled: bool = True
+    agent_evidence_audit_timeout: float = 40.0
     tool_result_max_chars: int = 8000   # 单条工具结果截断长度
 
     # 流式 / 首 Token 工程

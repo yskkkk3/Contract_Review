@@ -15,6 +15,11 @@ from app.core.config import get_settings
 settings = get_settings()
 
 
+def is_provider_access_error(exc: Exception) -> bool:
+    """认证、余额或权限失败不能通过换输出格式重试来恢复。"""
+    return getattr(exc, "status_code", None) in {401, 402, 403}
+
+
 def _extract_json(raw: str) -> dict | None:
     """容错 JSON 提取：先整体解析，再取首个 {…} 块。"""
     import json
@@ -180,7 +185,9 @@ class LLMClient:
             parsed = _extract_json(content)
             if parsed is not None:
                 return parsed
-        except Exception:  # noqa: BLE001 供应商不支持 json_schema → 走降级路径
+        except Exception as exc:  # noqa: BLE001 供应商不支持 json_schema → 走降级路径
+            if is_provider_access_error(exc):
+                raise
             pass
         try:
             raw = await self.chat(
@@ -188,7 +195,9 @@ class LLMClient:
                 brief=brief, **kwargs,
             )
             return _extract_json(raw)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            if is_provider_access_error(exc):
+                raise
             return None
 
     async def collect_stream(

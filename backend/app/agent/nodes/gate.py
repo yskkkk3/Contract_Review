@@ -36,36 +36,42 @@ def _rule_check(point: dict, chunk: str | None = None) -> list[str]:
     return errors
 
 
-async def _llm_check(point: dict, chunk: str) -> bool:
+async def _llm_check(point: dict, chunk: str, evidence_context: str = "") -> bool:
     try:
         prompt = load_prompt("gate")
         data = await get_sf_client().chat_structured(
             [
                 {"role": "system", "content": prompt},
-                {"role": "user", "content": json.dumps({"clause": chunk, "risk_point": point}, ensure_ascii=False)},
+                {"role": "user", "content": json.dumps({
+                    "clause": chunk, "risk_point": point, "evidence_context": evidence_context,
+                }, ensure_ascii=False)},
             ],
             json_schema=GATE_SCHEMA,
-            model=settings.llm_intent_model,
+            model=settings.llm_review_model,
             temperature=0,
-            max_tokens=128,
+            max_tokens=256,
         )
-        return bool(data and data.get("valid", True) is True)
+        return isinstance(data, dict) and data.get("valid") is True
     except Exception:  # noqa: BLE001
-        return True
+        return False
 
 
-async def _retry_fix(point: dict, chunk: str, risk_dim: str) -> dict | None:
+async def _retry_fix(point: dict, chunk: str, risk_dim: str, evidence_context: str = "") -> dict | None:
     """纠错重试：把质检错误反馈给 LLM 重新生成。"""
     try:
         sf = get_sf_client()
         raw = await sf.chat(
             [
                 {"role": "system", "content": load_prompt("gate_repair")},
-                {"role": "user", "content": f"条款：{chunk}\n维度：{risk_dim}\n上次输出：{json.dumps(point, ensure_ascii=False)}\n请修正。"},
+                {"role": "user", "content": json.dumps({
+                    "clause": chunk, "risk_dim": risk_dim, "previous": point,
+                    "evidence_context": evidence_context,
+                }, ensure_ascii=False)},
             ],
             model=settings.llm_review_model,
             temperature=0,
             max_tokens=1024,
+            brief=True,
         )
         import re
 
@@ -82,15 +88,17 @@ async def _retry_fix(point: dict, chunk: str, risk_dim: str) -> dict | None:
 
 async def gate_node(state: ReviewState) -> dict:
     gated: list[dict] = []
+    errors = list(state.get("errors", []))
     for output in state["specialist_outputs"]:
         for point in output.get("result", []):
             chunk = state["chunks"][output["chunk_index"]]
-            errors = _rule_check(point, chunk)
-            llm_ok = await _llm_check(point, chunk)
-            if errors or not llm_ok:
+            evidence_context = output.get("evidence_context", "")
+            point_errors = _rule_check(point, chunk)
+            llm_ok = await _llm_check(point, chunk, evidence_context)
+            if point_errors or not llm_ok:
                 # 纠错重试一次
-                fixed = await _retry_fix(point, state["chunks"][output["chunk_index"]], output["risk_dim"])
-                if fixed and not _rule_check(fixed, chunk) and await _llm_check(fixed, chunk):
+                fixed = await _retry_fix(point, chunk, output["risk_dim"], evidence_context)
+                if fixed and not _rule_check(fixed, chunk) and await _llm_check(fixed, chunk, evidence_context):
                     # 修复阶段没有重新检索，不能凭空增加未经专家阶段核验的引用。
                     refs = fixed.get("evidence_refs", [])
                     allowed = point.get("evidence_refs", [])
@@ -99,10 +107,16 @@ async def gate_node(state: ReviewState) -> dict:
                     ] if isinstance(refs, list) else []
                     point = fixed
                 else:
-                    if errors:
-                        state.setdefault("errors", []).append(f"gate reject: {errors}")
+                    errors.append(f"条款{output['chunk_index']}部分意见未通过证据与事实核验")
                     continue
             point["risk_dim"] = output["risk_dim"]
             point["chunk_index"] = output["chunk_index"]
             gated.append(point)
-    return {"gated": gated}
+            # 只流式展示已核验结果，避免已被质检剔除的法律结论仍留在前端。
+            try:
+                from langgraph.config import get_stream_writer
+
+                get_stream_writer()({"type": "risk_point", "risk_dim": output["risk_dim"], "points": [point]})
+            except Exception:  # noqa: BLE001 非流式上下文兼容
+                pass
+    return {"gated": gated, "errors": errors}

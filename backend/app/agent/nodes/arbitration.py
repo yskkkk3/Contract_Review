@@ -40,6 +40,10 @@ def _arbitrate_rules(points: list[dict]) -> list[dict]:
             prev = merged[idx]
             # 合并分析，取最高等级
             prev["risk_analysis"] = f"{prev['risk_analysis']}\n[{p.get('risk_dim','')}] {p['risk_analysis']}"
+            if p["suggested_content"] not in prev["suggested_content"]:
+                prev["suggested_content"] += f"\n[{p.get('risk_dim','')}] {p['suggested_content']}"
+            if p["original_content"] not in prev["original_content"]:
+                prev["original_content"] += "\n" + p["original_content"]
             if {"高": 3, "中": 2, "低": 1}[p["risk_level"]] > {"高": 3, "中": 2, "低": 1}[prev["risk_level"]]:
                 prev["risk_level"] = p["risk_level"]
             prev["evidence_refs"] = list(
@@ -50,12 +54,8 @@ def _arbitrate_rules(points: list[dict]) -> list[dict]:
 
 
 def _overall_risk(points: list[dict]) -> str:
-    high = sum(1 for p in points if p["risk_level"] == "高")
-    if high > 3 or len(points) > 10:
-        return "高"
-    if len(points) > 5:
-        return "中"
-    return "低"
+    rank = {"低": 1, "中": 2, "高": 3}
+    return max((point["risk_level"] for point in points), key=lambda level: rank[level], default="低")
 
 
 async def _llm_summary(points: list[dict], stance: str) -> dict:
@@ -90,4 +90,12 @@ async def _llm_summary(points: list[dict], stance: str) -> dict:
 async def arbitration_node(state: ReviewState) -> dict:
     points = _arbitrate_rules(state["gated"])
     summary = await _llm_summary(points, state["stance"])
+    summary["overall_risk"] = _overall_risk(points)
+    summary["review_status"] = "incomplete" if state.get("errors") else "completed"
+    if state.get("errors"):
+        summary["summary"] = (
+            "本次存在关键证据缺口或部分意见未能核验，尚未形成完整审阅结论；"
+            "未输出风险不代表合同无风险。已核验风险点仅供当前材料范围内参考。"
+        )
+        summary["suggestion"] = "请先补查相关规则、适用条件及合同材料，并重新复核；当前材料不能支持直接签订的结论。"
     return {"final_risk_points": points, "summary": summary}

@@ -20,7 +20,7 @@ from app.rag.ingest.crawler import (
     TEMPLATE_SAMPLES,
     crawl_szu_pages,
 )
-from app.rag.ingest.loader import ensure_collection, upsert_chunks
+from app.rag.ingest.loader import ensure_collection, replace_document_chunks
 from app.rag.retrievers.sparse_bm25 import BM25Index
 
 settings = get_settings()
@@ -97,7 +97,7 @@ async def main() -> None:
     total = 0
     for doc_type, chunks in by_type.items():
         coll = collection_map[doc_type]
-        n = await upsert_chunks(qdrant, coll, chunks)
+        n = await replace_document_chunks(qdrant, coll, chunks)
         total += n
         print(f"  {doc_type} -> {coll}: {n} points")
     await qdrant.close()
@@ -105,7 +105,7 @@ async def main() -> None:
     print("[ingest] 4/4 构建 BM25 索引...")
     bm25 = BM25Index()
     bm25.add_chunks(all_chunks)
-    out_path = Path(settings.oss_bucket_dir).parent / "kb_bm25.pkl"
+    out_path = Path(settings.kb_bm25_path) if settings.kb_bm25_path else Path(settings.oss_bucket_dir).parent / "kb_bm25.pkl"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     bm25.save(out_path)
     print(f"  BM25 索引已保存: {out_path}")
