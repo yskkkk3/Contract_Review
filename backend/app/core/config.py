@@ -45,9 +45,10 @@ class Settings(BaseSettings):
     # Agent 推理：DeepSeek 官方 OpenAI-compatible API
     llm_base_url: str = "https://api.deepseek.com"
     llm_api_key: str = ""
-    llm_review_model: str = "deepseek-v4-pro"
+    llm_review_model: str = "deepseek-flash"
     llm_chat_model: str = "deepseek-flash"
     llm_intent_model: str = "deepseek-flash"
+    llm_allowed_models: str = ""  # 可选逗号分隔白名单，限制推理成本；不约束向量/精排
 
     # RAG 向量化：阿里云百炼 OpenAI-compatible Embedding API
     embedding_base_url: str = ""
@@ -78,7 +79,12 @@ class Settings(BaseSettings):
     kb_bm25_path: str = ""  # 空则自动推导为 OSS_BUCKET_DIR 上级的 kb_bm25.pkl
     rag_rerank_top_k: int = 5
     rag_query_variants: int = 3
+    rag_query_expansion_timeout: float = 15.0
     rag_per_doc_quota: int = 3  # 分层配额：每个文档最多 N 个 chunk 进入 rerank
+    rag_evidence_rerank_enabled: bool = True
+    rag_evidence_rerank_docs: int = 30  # cross-encoder 后复核的最大文档数
+    rag_evidence_rerank_timeout: float = 20.0
+    rag_context_max_chars: int = 7000
 
     # langfuse
     langfuse_public_key: str = ""
@@ -122,12 +128,18 @@ class Settings(BaseSettings):
     # Agent 工具调用（Tool Calling）
     agent_tool_calling_enabled: bool = True
     agent_max_tool_iterations: int = 3  # 工具循环轮次上限（防死循环）
+    agent_review_max_tokens: int = 4096
+    agent_evidence_audit_enabled: bool = True
+    agent_evidence_audit_timeout: float = 90.0
     tool_result_max_chars: int = 8000   # 单条工具结果截断长度
 
     # 流式 / 首 Token 工程
     metrics_enabled: bool = True
     metrics_window_size: int = 200      # 滑动窗口样本数
     llm_prompt_cache: bool = False      # 仅 SiliconFlow 等支持 cache_prompt 的供应商可开启
+    llm_brief_disable_thinking: bool | None = None  # None仅官网自动处理；兼容中转可显式开启
+    llm_brief_reasoning_effort: str | None = None  # 仅在当前供应商验证后显式配置
+    llm_http_trust_env: bool = True  # 含系统代理；本地代理故障时可显式关闭
     max_concurrent_llm: int = 4         # LLM 并发上限（应用层信号量，防突发打满供应商）
     chat_stream_timeout: float = 30.0   # 聊天流式超时（秒）
     review_stream_timeout: float = 120.0  # 审阅流式超时（秒）

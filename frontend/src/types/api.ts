@@ -77,6 +77,7 @@ export interface ReviewSummary {
   summary: string
   suggestion: string
   overall_risk: '高' | '中' | '低'
+  review_status?: 'completed' | 'incomplete'
   metrics?: {
     total_ms: number
     risk_point_count: number

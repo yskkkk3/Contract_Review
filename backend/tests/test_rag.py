@@ -87,6 +87,32 @@ def test_query_expansion_fallback():
     assert _parse_variants('{"k": 1}', 2) == []
 
 
+async def test_query_expansion_timeout_does_not_block_retrieval_or_cache_failure(monkeypatch):
+    import asyncio
+
+    from app.rag import query_expansion
+
+    class Client:
+        slow = True
+        calls = 0
+
+        async def chat(self, **kwargs):
+            self.calls += 1
+            if self.slow:
+                await asyncio.sleep(1)
+            return '["采购验收起算规则"]'
+
+    client = Client()
+    monkeypatch.setattr(query_expansion, "get_sf_client", lambda: client)
+    monkeypatch.setattr(query_expansion.settings, "rag_query_expansion_timeout", 0.01)
+    query = "独立的改写超时回归样例"
+    assert await query_expansion.expand_query(query, variants=2) == [query]
+    client.slow = False
+    assert await query_expansion.expand_query(query, variants=2) == [query, "采购验收起算规则"]
+    assert await query_expansion.expand_query(query, variants=2) == [query, "采购验收起算规则"]
+    assert client.calls == 2
+
+
 def test_retrieval_metrics_empty():
     m = {"recall@k": 0.0, "precision@k": 0.0, "mrr": 0.0, "ndcg@k": 0.0, "hit@k": 0.0}
     assert evaluate_aggregate([]) == m
@@ -96,3 +122,27 @@ def evaluate_aggregate(cases):
     from app.rag.eval.retrieval_metrics import evaluate_retrieval
 
     return evaluate_retrieval(cases, k=5)
+
+
+async def test_rerank_keeps_document_identity_for_identical_passages(monkeypatch):
+    from app.rag import rerank
+    from app.rag.retrievers.hybrid import RetrievedChunk
+
+    sent = []
+
+    class FakeClient:
+        async def rerank(self, query, documents, top_n):
+            sent.extend(documents)
+            return [{"index": 1, "relevance_score": 0.9}, {"index": 0, "relevance_score": 0.1}]
+
+    monkeypatch.setattr(rerank, "get_sf_client", FakeClient)
+    candidates = [
+        RetrievedChunk(Chunk("合同付款期限应明确", "国家付款规则", "source-a", "regulation", "第九条"), 0.2),
+        RetrievedChunk(Chunk("合同付款期限应明确", "学校付款制度", "source-b", "institution", "第三条"), 0.1),
+    ]
+    ranked = await rerank.rerank_chunks("学校采购付款", candidates, top_k=2)
+    assert len(set(sent)) == 2
+    assert all(candidate.chunk.doc_id in passage and candidate.chunk.text in passage
+               for candidate, passage in zip(candidates, sent, strict=True))
+    assert [item.chunk.doc_id for item in ranked] == ["学校付款制度", "国家付款规则"]
+    assert ranked[0].score == 0.9

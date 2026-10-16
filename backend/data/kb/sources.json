@@ -1,0 +1,284 @@
+{
+  "regulation/保障中小企业款项支付条例·付款期限与验收（2025修订）.txt": {
+    "source": "https://www.mee.gov.cn/zcwj/gwywj/202503/t20250325_1104643.shtml",
+    "law_name": "保障中小企业款项支付条例",
+    "legal_level": "行政法规",
+    "version": "2025年修订（国务院令第802号）",
+    "effective_date": "2025-06-01",
+    "verified_at": "2026-10-16",
+    "articles": "第2、3、9、10、14、15、17条",
+    "scope": "先核验付款方类型、订约时企业规模和合同时间；区分机关事业单位60日上限、大型企业合理另约、验收起算及特别规定",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/保障中小企业款项支付条例·保证金与审计结算（2025修订）.txt": {
+    "source": "https://www.mee.gov.cn/zcwj/gwywj/202503/t20250325_1104643.shtml",
+    "law_name": "保障中小企业款项支付条例",
+    "legal_level": "行政法规",
+    "version": "2025年修订（国务院令第802号）",
+    "effective_date": "2025-06-01",
+    "verified_at": "2026-10-12",
+    "articles": "第11至13条",
+    "scope": "中小企业款项支付；审计结算条款针对机关、事业单位及国有大型企业",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/个人信息保护法·委托处理与退出删除.txt": {
+    "source": "https://www.cac.gov.cn/2021-08/20/c_1631050028355286.htm",
+    "law_name": "中华人民共和国个人信息保护法",
+    "legal_level": "法律",
+    "version": "2021年通过",
+    "effective_date": "2021-11-01",
+    "verified_at": "2026-10-15",
+    "articles": "第19、21、47、55、56条",
+    "scope": "学校委托软件、云服务或运维供应商处理师生个人信息；先判断双方处理角色",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/个人信息保护法·敏感信息与影响评估.txt": {
+    "source": "https://www.cac.gov.cn/2021-08/20/c_1631050028355286.htm",
+    "law_name": "中华人民共和国个人信息保护法",
+    "legal_level": "法律",
+    "version": "2021年通过",
+    "effective_date": "2021-11-01",
+    "verified_at": "2026-10-15",
+    "articles": "第13、28至31、55、56条",
+    "scope": "涉及敏感个人信息或不满14周岁未成年人信息的校园服务；核验合法处理基础",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/网络数据安全管理条例·外包处理与安全事件.txt": {
+    "source": "https://app.www.gov.cn/govdata/gov/202409/30/520076/article.html",
+    "law_name": "网络数据安全管理条例",
+    "legal_level": "行政法规",
+    "version": "2024年公布（国务院令第790号）",
+    "effective_date": "2025-01-01",
+    "verified_at": "2026-10-12",
+    "articles": "第11、12、16条",
+    "scope": "网络数据处理；第12条针对个人信息和重要数据提供、委托处理；第16条有特定服务场景",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/数据安全法·全流程安全与事件处置.txt": {
+    "source": "https://www.cac.gov.cn/2021-06/11/c_1624994566919140.htm",
+    "law_name": "中华人民共和国数据安全法",
+    "legal_level": "法律",
+    "version": "2021年通过",
+    "effective_date": "2021-09-01",
+    "verified_at": "2026-10-12",
+    "articles": "第27、29条",
+    "scope": "境内数据处理活动；重要数据的特别义务须先核实数据属性",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/著作权法·委托作品与许可转让.txt": {
+    "source": "https://www.ncac.gov.cn/xxfb/flfg/flfg_532/202103/t20210309_50530.html",
+    "law_name": "中华人民共和国著作权法",
+    "legal_level": "法律",
+    "version": "2020年修正",
+    "effective_date": "2021-06-01",
+    "verified_at": "2026-10-16",
+    "articles": "第10、19、26至29条",
+    "scope": "委托创作作品及著作权许可、转让；软件等特殊客体还需核验专门规则",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/合同编通则司法解释·违约金调整.txt": {
+    "source": "https://www.court.gov.cn/fabu/xiangqing/419382.html",
+    "law_name": "最高人民法院关于适用《中华人民共和国民法典》合同编通则若干问题的解释",
+    "legal_level": "司法解释",
+    "version": "法释〔2023〕13号",
+    "effective_date": "2023-12-05",
+    "verified_at": "2026-10-12",
+    "articles": "第64、65条",
+    "scope": "违约金调整争议；以民法典第584条损失为基础综合衡量，注意时间适用",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/仲裁法·仲裁协议与一裁终局（2025修订）.txt": {
+    "source": "https://zcb.jinan.gov.cn/col/col10350/art/2026/art_5de7a6c6d76342cf9452dea107bd5394.html",
+    "law_name": "中华人民共和国仲裁法",
+    "legal_level": "法律",
+    "version": "2025年修订",
+    "effective_date": "2026-03-01",
+    "verified_at": "2026-10-15",
+    "articles": "第10、27至30、82条",
+    "scope": "适用2025年修订法的仲裁事项；历史合同及涉外特别规则另行核验",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/民事诉讼法·协议管辖与实际联系（2023修正）.txt": {
+    "source": "https://fgk.chinatax.gov.cn/zcfgk/c100009/c5220330/content.html",
+    "law_name": "中华人民共和国民事诉讼法",
+    "legal_level": "法律",
+    "version": "2023年修正",
+    "effective_date": "2024-01-01",
+    "verified_at": "2026-10-15",
+    "articles": "第35、277条",
+    "scope": "区分国内协议管辖与涉外协议选择中国法院；核验涉外、书面协议、级别和专属管辖",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/政府采购需求管理办法·履约验收方案.txt": {
+    "source": "https://gks.mof.gov.cn/guizhangzhidu/202105/P020210510621177265265.pdf",
+    "law_name": "政府采购需求管理办法",
+    "legal_level": "部门规范性文件",
+    "version": "财库〔2021〕22号",
+    "effective_date": "2021-07-01",
+    "verified_at": "2026-10-12",
+    "articles": "第23、24条",
+    "scope": "政府采购货物、工程和服务的需求与履约验收管理",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/政府采购促进中小企业发展管理办法·声明与分包.txt": {
+    "source": "https://gks.mof.gov.cn/guizhangzhidu/202012/P020201228514483258334.pdf",
+    "law_name": "政府采购促进中小企业发展管理办法",
+    "legal_level": "部门规范性文件",
+    "version": "财库〔2020〕46号",
+    "effective_date": "2021-01-01",
+    "verified_at": "2026-10-12",
+    "articles": "第11至13条",
+    "scope": "享受中小企业扶持政策的政府采购；不得混同款项支付条例的企业规模认定程序",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/民法典合同编·技术合同与知识产权.txt": {
+    "source": "https://www.samr.gov.cn/zw/zfxxgk/fdzdgknr/bgt/art/2023/art_60fb3863b7364b759123a42d1df568ca.html",
+    "law_name": "中华人民共和国民法典",
+    "legal_level": "法律",
+    "version": "2020年通过",
+    "effective_date": "2021-01-01",
+    "verified_at": "2026-10-15",
+    "articles": "第843、847、859至863条",
+    "scope": "按成果或责任类型核对约定、法律默认规则及例外；不得将特定规则泛化至所有采购合同",
+    "content_kind": "法条节录、规则摘要与审阅提示，摘要部分非逐字原文"
+  },
+  "regulation/民法典合同编·保密与知识产权.txt": {
+    "source": "https://www.samr.gov.cn/zw/zfxxgk/fdzdgknr/bgt/art/2023/art_60fb3863b7364b759123a42d1df568ca.html",
+    "law_name": "中华人民共和国民法典",
+    "legal_level": "法律",
+    "version": "2020年通过",
+    "effective_date": "2021-01-01",
+    "verified_at": "2026-10-15",
+    "articles": "第470、471、501条及分类审阅提示",
+    "scope": "按成果或责任类型核对约定、法律默认规则及例外；不得将特定规则泛化至所有采购合同",
+    "content_kind": "法条节录、规则摘要与审阅提示，摘要部分非逐字原文"
+  },
+  "regulation/民法典合同编·违约责任与定金.txt": {
+    "source": "https://www.samr.gov.cn/zw/zfxxgk/fdzdgknr/bgt/art/2023/art_60fb3863b7364b759123a42d1df568ca.html",
+    "law_name": "中华人民共和国民法典",
+    "legal_level": "法律",
+    "version": "2020年通过",
+    "effective_date": "2021-01-01",
+    "verified_at": "2026-10-15",
+    "articles": "第577、584至587、590、591、593条",
+    "scope": "按成果或责任类型核对约定、法律默认规则及例外；不得将特定规则泛化至所有采购合同",
+    "content_kind": "法条节录、规则摘要与审阅提示，摘要部分非逐字原文"
+  },
+  "regulation/政府采购法·总则与适用范围.txt": {
+    "source": "https://www.samr.gov.cn/zw/zfxxgk/fdzdgknr/bgt/art/2023/art_47b5807c40c040368eb5f13b489d6c43.html",
+    "law_name": "中华人民共和国政府采购法",
+    "legal_level": "法律",
+    "version": "2014年修正",
+    "effective_date": "2014-08-31",
+    "verified_at": "2026-10-16",
+    "articles": "第1、2、3、6、7、9、12条；第84、85条例外",
+    "scope": "境内国家机关、事业单位和团体组织使用财政性资金，目录内或限额以上的货物、工程、服务采购；地区与目录限额需另核验",
+    "content_kind": "法条节录"
+  },
+  "regulation/计算机软件保护条例·委托开发与许可边界.txt": {
+    "source": "https://www.cac.gov.cn/2013-02/08/c_12648744.htm",
+    "law_name": "计算机软件保护条例",
+    "legal_level": "行政法规",
+    "version": "2013年修订",
+    "effective_date": "2013-03-01",
+    "verified_at": "2026-10-16",
+    "articles": "第8、11、16、18至20条",
+    "scope": "委托开发的软件著作权及软件许可、转让；区分书面约定优先与未约定默认归受托人",
+    "content_kind": "规则摘要与审阅提示，非逐字法规原文"
+  },
+  "regulation/民法典合同编·合同订立与效力要点.txt": {
+    "source": "https://www.samr.gov.cn/zw/zfxxgk/fdzdgknr/bgt/art/2023/art_60fb3863b7364b759123a42d1df568ca.html",
+    "law_name": "中华人民共和国民法典",
+    "legal_level": "法律",
+    "version": "2020年通过",
+    "effective_date": "2021-01-01",
+    "verified_at": "2026-10-16",
+    "articles": "第469、502、503、505至507条",
+    "scope": "区分报批、无权代理、经营范围、免责无效及争议解决条款独立效力",
+    "content_kind": "法条节录及规则摘要、审阅提示；摘要与提示非逐字原文"
+  },
+  "regulation/政府采购法·合同签订与验收.txt": {
+    "source": "https://www.samr.gov.cn/zw/zfxxgk/fdzdgknr/bgt/art/2023/art_47b5807c40c040368eb5f13b489d6c43.html",
+    "law_name": "中华人民共和国政府采购法",
+    "legal_level": "法律",
+    "version": "2014年修正",
+    "effective_date": "2014-08-31",
+    "verified_at": "2026-10-16",
+    "articles": "第46、47、49、50条及验收依据提示",
+    "scope": "先确认政府采购适用，区分备案、公告、补充合同与公共利益变更例外",
+    "content_kind": "法条节录及规则摘要、审阅提示；摘要与提示非逐字原文"
+  },
+  "regulation/政府采购法·法律责任.txt": {
+    "source": "https://www.samr.gov.cn/zw/zfxxgk/fdzdgknr/bgt/art/2023/art_47b5807c40c040368eb5f13b489d6c43.html",
+    "law_name": "中华人民共和国政府采购法",
+    "legal_level": "法律",
+    "version": "2014年修正",
+    "effective_date": "2014-08-31",
+    "verified_at": "2026-10-16",
+    "articles": "第71、77、79条",
+    "scope": "2014年修正删除旧代理资格审批责任项；逐项核对违法事实和处理程序",
+    "content_kind": "法条节录及规则摘要、审阅提示；摘要与提示非逐字原文"
+  },
+  "regulation/政府采购法实施条例·履约验收.txt": {
+    "source": "https://www.sac.gov.cn/xxgk/flfg/art/2015/art_754b132d3be34c8aac25df23b4c21dd8.html",
+    "law_name": "中华人民共和国政府采购法实施条例",
+    "legal_level": "行政法规",
+    "version": "2015年公布（国务院令第658号）",
+    "effective_date": "2015-03-01",
+    "verified_at": "2026-10-16",
+    "articles": "第45、46、51条及政府采购法关联提示",
+    "scope": "验收、电子档案与及时付款；十五年留存和追加采购另核对上位法",
+    "content_kind": "法条节录及规则摘要、审阅提示；摘要与提示非逐字原文"
+  },
+  "regulation/政府购买服务管理办法.txt": {
+    "source": "https://www.mof.gov.cn/zcsjtsgb/gztsgb/202001/t20200103_3578395.htm",
+    "law_name": "政府购买服务管理办法",
+    "legal_level": "部门规章",
+    "version": "财政部令第102号",
+    "effective_date": "2020-03-01",
+    "verified_at": "2026-10-16",
+    "articles": "第2、5、8、10、23至26、33条",
+    "scope": "政府购买服务不同于所有政府采购服务；核验购买主体、目录和一年/三年例外条件",
+    "content_kind": "法条节录及规则摘要、审阅提示；摘要与提示非逐字原文"
+  },
+  "regulation/深圳条例·合同签订与数量调整.txt": {
+    "source": "https://www.sz.gov.cn/zfgb/2019/gb1103_2/content/post_4981357.html",
+    "law_name": "深圳经济特区政府采购条例",
+    "legal_level": "经济特区法规",
+    "version": "2019年修正（合同部分为第37至40条）",
+    "effective_date": "2019-04-26",
+    "verified_at": "2026-10-16",
+    "articles": "第37、38、40条",
+    "scope": "深圳政府采购；先核对特区规则时间地域及全国规则衔接，不使用旧版31至33条冒充新版",
+    "content_kind": "法条节录及规则摘要、审阅提示；摘要与提示非逐字原文",
+    "related_sources": [
+      "https://www.sz.gov.cn/cn/xxgk/zfxxgj/tzgg/content/post_1435195.html"
+    ]
+  },
+  "regulation/深圳条例·补充采购合同与备案.txt": {
+    "source": "https://www.sz.gov.cn/zfgb/2019/gb1103_2/content/post_4981357.html",
+    "law_name": "深圳经济特区政府采购条例及其实施细则",
+    "legal_level": "经济特区法规及政府规章",
+    "version": "条例2019年修正；细则市政府令第249号",
+    "effective_date": "2019-04-26",
+    "verified_at": "2026-10-16",
+    "articles": "条例第37、40条；细则第54条",
+    "scope": "深圳补充采购比例、批准和预算边界，备案变更不等于自动生效条件",
+    "content_kind": "法条节录及规则摘要、审阅提示；摘要与提示非逐字原文",
+    "related_sources": [
+      "https://sf.sz.gov.cn/fggzsjcx/content/post_9728716.html",
+      "https://www.sz.gov.cn/cn/xxgk/zfxxgj/tzgg/content/post_1435195.html"
+    ]
+  },
+  "regulation/实施条例·合同签订公告支付.txt": {
+    "source": "https://www.sac.gov.cn/xxgk/flfg/art/2015/art_754b132d3be34c8aac25df23b4c21dd8.html",
+    "law_name": "中华人民共和国政府采购法实施条例",
+    "legal_level": "行政法规",
+    "version": "2015年公布（国务院令第658号）",
+    "effective_date": "2015-03-01",
+    "verified_at": "2026-10-16",
+    "articles": "第49至51条",
+    "scope": "拒签合同候选递补，合同公告二工作日及国家秘密商业秘密排除，与及时支付",
+    "content_kind": "法条节录及规则摘要、审阅提示；摘要与提示非逐字原文"
+  }
+}
