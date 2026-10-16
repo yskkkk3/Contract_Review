@@ -6,7 +6,7 @@ import asyncio
 import pytest
 
 import app.rag.client as client_mod
-from app.rag.client import LLMClient
+from app.rag.client import LLMClient, _final_content
 
 
 class _FakeChoice:
@@ -28,6 +28,7 @@ def fake_openai(monkeypatch):
     """CI 无 .env：mock AsyncOpenAI 构造，避免 openai SDK 强制校验 API key。"""
 
     monkeypatch.setattr(client_mod.settings, "llm_allowed_models", "")
+    monkeypatch.setattr(client_mod.settings, "llm_brief_reasoning_effort", None)
 
     class _FakeCompletions:
         def __init__(self):
@@ -42,6 +43,50 @@ def fake_openai(monkeypatch):
 
     monkeypatch.setattr(client_mod, "AsyncOpenAI", _FakeAsyncOpenAI)
     return _FakeAsyncOpenAI
+
+
+@pytest.mark.parametrize("reasoning,content,expected", [
+    ("private", "private", ""),
+    ("private", 'private\n{"ok":true}', '{"ok":true}'),
+    ("private", '{"ok":true}', '{"ok":true}'),
+    (None, '{"ok":true}', '{"ok":true}'),
+])
+def test_relay_reasoning_duplicate_is_not_treated_as_final_output(reasoning, content, expected):
+    from types import SimpleNamespace
+
+    assert _final_content(SimpleNamespace(content=content, reasoning_content=reasoning)) == expected
+
+
+async def test_brief_effort_is_opt_in_and_preserves_explicit_request(monkeypatch, fake_openai):
+    client = LLMClient()
+    captured = {}
+
+    async def create(**kwargs):
+        captured.clear()
+        captured.update(kwargs)
+        return _FakeResp("OK")
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    monkeypatch.setattr(client_mod.settings, "llm_brief_reasoning_effort", "low")
+    await client.chat([], brief=True)
+    assert captured["reasoning_effort"] == "low"
+    await client.chat([], brief=True, reasoning_effort="high")
+    assert captured["reasoning_effort"] == "high"
+    await client.chat([], brief=False)
+    assert "reasoning_effort" not in captured
+
+
+async def test_json_inside_duplicated_reasoning_is_not_accepted(monkeypatch, fake_openai):
+    client = LLMClient()
+
+    async def create(**kwargs):
+        text = 'internal consideration {"valid":true}'
+        response = _FakeResp(text)
+        response.choices[0].message.reasoning_content = text
+        return response
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    assert await client.chat_structured([], json_schema={"type": "object"}) is None
 
 
 @pytest.mark.parametrize("method", ["chat", "chat_with_tools", "chat_structured", "collect_stream", "chat_stream", "chat_stream_events"])
@@ -103,6 +148,13 @@ async def test_proxy_policy_applies_to_inference_embedding_and_rerank(monkeypatc
         await inference.aclose()
         await embedding.aclose()
         await client.aclose()
+
+
+def test_connection_deadline_is_distinct_from_model_read_deadline(fake_openai):
+    client = LLMClient()
+    for sdk in [client._openai, client._embedding_openai]:
+        assert sdk.init_kwargs["timeout"].connect == 10
+        assert sdk.init_kwargs["timeout"].read == 120
 
 
 @pytest.mark.asyncio

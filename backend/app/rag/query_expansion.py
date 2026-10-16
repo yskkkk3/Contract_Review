@@ -5,6 +5,7 @@
 盲区；改写失败时按规则降级为原始查询，不影响主链路；进程内 TTL 缓存
 避免评测与高频场景重复调用 LLM。
 """
+import asyncio
 import json
 import logging
 import time
@@ -58,7 +59,7 @@ async def expand_query(query: str, variants: int | None = None) -> list[str]:
 
     try:
         sf = get_sf_client()
-        raw = await sf.chat(
+        raw = await asyncio.wait_for(sf.chat(
             messages=[
                 {"role": "system", "content": load_prompt("rag_query_expansion", n=variants - 1)},
                 {"role": "user", "content": query},
@@ -67,7 +68,7 @@ async def expand_query(query: str, variants: int | None = None) -> list[str]:
             temperature=0.2,
             max_tokens=512,
             brief=True,
-        )
+        ), timeout=settings.rag_query_expansion_timeout)
         extra = _parse_variants(raw, limit=variants - 1)
         result = [query, *(item for item in extra if item != query)]
         _cache.set(cache_key, result)

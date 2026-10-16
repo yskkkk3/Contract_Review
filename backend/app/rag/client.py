@@ -60,6 +60,15 @@ def _extract_json(raw: str) -> dict | None:
     return None
 
 
+def _final_content(message: Any) -> str:
+    """部分中转将reasoning_content重复拼进content，只保留可区分的最终正文。"""
+    content = message.content or ""
+    reasoning = getattr(message, "reasoning_content", None)
+    if isinstance(reasoning, str) and reasoning and content.startswith(reasoning):
+        return content[len(reasoning):].lstrip()
+    return content
+
+
 class LLMClient:
     def __init__(self) -> None:
         self.base_url = settings.effective_llm_base_url
@@ -68,7 +77,7 @@ class LLMClient:
         self.embedding_api_key = settings.effective_embedding_api_key
         self.rerank_url = settings.effective_rerank_url
         self.rerank_api_key = settings.effective_rerank_api_key
-        self.timeout = 120.0
+        self.timeout = httpx.Timeout(120.0, connect=10.0)
         self._allowed_models = {
             item.strip() for item in settings.llm_allowed_models.split(",") if item.strip()
         }
@@ -118,6 +127,8 @@ class LLMClient:
             extra = dict(kwargs.get("extra_body") or {})
             extra.setdefault("thinking", {"type": "disabled"})
             kwargs["extra_body"] = extra
+        if brief and settings.llm_brief_reasoning_effort:
+            kwargs.setdefault("reasoning_effort", settings.llm_brief_reasoning_effort)
         return self._apply_cache(kwargs)
 
     @property
@@ -158,7 +169,7 @@ class LLMClient:
                 max_tokens=max_tokens,
                 **self._task_options(kwargs, brief),
             )
-        return resp.choices[0].message.content or ""
+        return _final_content(resp.choices[0].message)
 
     async def chat_with_tools(
         self,
@@ -185,7 +196,9 @@ class LLMClient:
                 max_tokens=max_tokens,
                 **self._apply_cache(kwargs),
             )
-        return resp.choices[0].message
+        message = resp.choices[0].message
+        message.content = _final_content(message)
+        return message
 
     async def chat_structured(
         self,
@@ -216,7 +229,7 @@ class LLMClient:
                     },
                     **self._task_options(kwargs, brief),
                 )
-            content = resp.choices[0].message.content or ""
+            content = _final_content(resp.choices[0].message)
             parsed = _extract_json(content)
             if parsed is not None:
                 return parsed
@@ -264,7 +277,7 @@ class LLMClient:
                     "total_tokens": chunk.usage.total_tokens,
                 }
             if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-                full.append(chunk.choices[0].delta.content)
+                full.append(_final_content(chunk.choices[0].delta))
         return "".join(full), usage
 
     async def chat_stream(self, messages: list[dict], model: str | None = None, **kwargs: Any):
@@ -283,7 +296,9 @@ class LLMClient:
             )
         async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
+                text = _final_content(chunk.choices[0].delta)
+                if text:
+                    yield text
 
     async def chat_stream_events(self, messages: list[dict], model: str | None = None, **kwargs: Any):
         """流式事件生成器：yield ("start", None) → ("delta", text)… → ("usage", dict)。
@@ -312,7 +327,9 @@ class LLMClient:
                     },
                 )
             if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-                yield ("delta", chunk.choices[0].delta.content)
+                text = _final_content(chunk.choices[0].delta)
+                if text:
+                    yield ("delta", text)
 
     # ---------- embedding（OpenAI SDK） ----------
     async def embed(self, texts: list[str], model: str | None = None) -> list[list[float]]:

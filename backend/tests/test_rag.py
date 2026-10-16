@@ -87,6 +87,32 @@ def test_query_expansion_fallback():
     assert _parse_variants('{"k": 1}', 2) == []
 
 
+async def test_query_expansion_timeout_does_not_block_retrieval_or_cache_failure(monkeypatch):
+    import asyncio
+
+    from app.rag import query_expansion
+
+    class Client:
+        slow = True
+        calls = 0
+
+        async def chat(self, **kwargs):
+            self.calls += 1
+            if self.slow:
+                await asyncio.sleep(1)
+            return '["采购验收起算规则"]'
+
+    client = Client()
+    monkeypatch.setattr(query_expansion, "get_sf_client", lambda: client)
+    monkeypatch.setattr(query_expansion.settings, "rag_query_expansion_timeout", 0.01)
+    query = "独立的改写超时回归样例"
+    assert await query_expansion.expand_query(query, variants=2) == [query]
+    client.slow = False
+    assert await query_expansion.expand_query(query, variants=2) == [query, "采购验收起算规则"]
+    assert await query_expansion.expand_query(query, variants=2) == [query, "采购验收起算规则"]
+    assert client.calls == 2
+
+
 def test_retrieval_metrics_empty():
     m = {"recall@k": 0.0, "precision@k": 0.0, "mrr": 0.0, "ndcg@k": 0.0, "hit@k": 0.0}
     assert evaluate_aggregate([]) == m
