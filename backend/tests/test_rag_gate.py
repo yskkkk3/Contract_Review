@@ -93,3 +93,44 @@ async def test_gate_closes_client_when_retrieval_fails(monkeypatch):
     with pytest.raises(ExceptionGroup):
         await gate_metrics.run(0.6, 0.4, 0.5)
     assert rag.closed
+
+
+async def test_interrupted_gate_preserves_checkpoints_without_publishing_partial_metrics(monkeypatch, tmp_path):
+    import httpx
+
+    from scripts import gate_metrics
+
+    class FakeRag:
+        closed = False
+        calls = 0
+
+        async def ensure_ready(self):
+            pass
+
+        async def search(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 2:
+                response = httpx.Response(400, json={"code": "Arrearage"},
+                                          request=httpx.Request("POST", "https://example.org/reranks"))
+                raise httpx.HTTPStatusError("billing unavailable", request=response.request, response=response)
+            return [SimpleNamespace(chunk=SimpleNamespace(doc_id="相关"))]
+
+        async def close(self):
+            self.closed = True
+
+    rag = FakeRag()
+    monkeypatch.setattr(gate_metrics, "get_rag_service", lambda: rag)
+    monkeypatch.setattr(gate_metrics, "GOLDEN_SET", [
+        SimpleNamespace(id=f"T{i}", question=f"问题{i}", risk_dim="财务与付款", relevant_docs=["相关"])
+        for i in range(2)
+    ])
+    output = tmp_path / "interrupted.json"
+    with pytest.raises(ExceptionGroup):
+        await gate_metrics.run(0.6, 0.4, 0.5, concurrency=1, output=output)
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["evaluation_status"] == "incomplete"
+    assert report["metrics"] is None and report["gate_exit_code"] == 1
+    assert report["case_count"] == 1 and report["expected_case_count"] == 2
+    assert report["detail"][1]["provider_error_code"] == "Arrearage"
+    assert len(list(output.with_suffix(".cases").glob("*.json"))) == 2
+    assert rag.closed

@@ -15,6 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.rag.client import provider_error_code, provider_status_code
 from app.rag.eval.golden_set import GOLDEN_SET
 from app.rag.eval.retrieval_metrics import evaluate_retrieval
 from app.rag.service import get_rag_service
@@ -32,22 +33,43 @@ async def run(
         raise ValueError("concurrency must be between 1 and 8")
     if output and output.exists():
         raise FileExistsError(f"Refusing to overwrite evaluation report: {output}")
+    checkpoints = output.with_suffix(".cases") if output else None
+    if checkpoints:
+        checkpoints.parent.mkdir(parents=True, exist_ok=True)
+        checkpoints.mkdir(exist_ok=False)
     rag = get_rag_service()
     semaphore = asyncio.Semaphore(concurrency)
     completed = 0
+    partial: dict[int, dict] = {}
+
+    def save_case(index: int, row: dict) -> None:
+        partial[index] = row
+        if checkpoints:
+            with (checkpoints / f"{index:03d}.json").open("x", encoding="utf-8") as handle:
+                json.dump(row, handle, ensure_ascii=False, indent=2)
 
     async def evaluate(index, case):
         nonlocal completed
         async with semaphore:
-            evidence = await rag.search(case.question, risk_dim=case.risk_dim, top_k=5)
+            row = {
+                "id": getattr(case, "id", str(index)), "question": case.question,
+                "risk_dim": case.risk_dim, "relevant_docs": case.relevant_docs,
+            }
+            try:
+                evidence = await rag.search(case.question, risk_dim=case.risk_dim, top_k=5)
+            except Exception as exc:
+                save_case(index, {**row, "evaluation_status": "failed",
+                                  "exception": type(exc).__name__,
+                                  "http_status": provider_status_code(exc),
+                                  "provider_error_code": provider_error_code(exc)})
+                raise
+            row.update({"retrieved": [e.chunk.doc_id for e in evidence],
+                        "evaluation_status": "completed"})
+            save_case(index, row)
             completed += 1
             if completed % 10 == 0:
                 print(f"[gate] completed {completed}/{len(GOLDEN_SET)}", flush=True)
-            return {
-                "id": getattr(case, "id", str(index)), "question": case.question,
-                "risk_dim": case.risk_dim, "relevant_docs": case.relevant_docs,
-                "retrieved": [e.chunk.doc_id for e in evidence],
-            }
+            return row
 
     try:
         await rag.ensure_ready()
@@ -55,6 +77,17 @@ async def run(
             tasks = [group.create_task(evaluate(index, case))
                      for index, case in enumerate(GOLDEN_SET)]
         detail = [task.result() for task in tasks]
+    except Exception:
+        if output:
+            with output.open("x", encoding="utf-8") as handle:
+                json.dump({
+                    "evaluation_status": "incomplete", "top_k": 5,
+                    "expected_case_count": len(GOLDEN_SET), "case_count": completed,
+                    "metrics": None, "gate_exit_code": 1,
+                    "thresholds": {"recall@k": recall5, "mrr": mrr, "ndcg@k": ndcg},
+                    "detail": [partial[index] for index in sorted(partial)],
+                }, handle, ensure_ascii=False, indent=2)
+        raise
     finally:
         await rag.close()
 
@@ -81,6 +114,7 @@ async def run(
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open("x", encoding="utf-8") as handle:
             json.dump({
+                "evaluation_status": "finished",
                 "top_k": 5, "case_count": len(detail), "metrics": metrics,
                 "thresholds": {"recall@k": recall5, "mrr": mrr, "ndcg@k": ndcg},
                 "gate_exit_code": 1 if fail else 0, "detail": detail,
