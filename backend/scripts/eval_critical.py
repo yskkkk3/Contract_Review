@@ -50,6 +50,12 @@ async def run(output: Path, concurrency: int = 2, ids: str = "") -> int:
     rag = get_rag_service()
     sf = get_sf_client()
     settings = get_settings()
+    source_root = Path(__file__).resolve().parents[1]
+    inputs = [*sorted((source_root / "app/agent/prompts").rglob("*.md")),
+              source_root / "app/agent/nodes/specialist.py", source_root / "app/agent/nodes/gate.py",
+              source_root / "app/rag/legal_coverage.py", source_root / "data/kb/legal_checks.json"]
+    input_hashes = {path.relative_to(source_root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                    for path in inputs}
     sem = asyncio.Semaphore(concurrency)
     started = time.perf_counter()
     stopped = asyncio.Event()
@@ -58,6 +64,7 @@ async def run(output: Path, concurrency: int = 2, ids: str = "") -> int:
         async with sem:
             tick = time.perf_counter()
             row = {**asdict(case), "passed": False}
+            stage = "retrieval"
             try:
                 if stopped.is_set():
                     raise RuntimeError("Provider unavailable; evaluation stopped")
@@ -76,6 +83,8 @@ async def run(output: Path, concurrency: int = 2, ids: str = "") -> int:
                                      "context_chars": len(bundle.text)},
                 })
                 state = {"stance": "甲方", "intensity": "标准", "chunks": [case.clause], "errors": []}
+                row["retrieval_seconds"] = round(time.perf_counter() - tick, 2)
+                stage = "specialist"
                 # Only the clause and dimension are passed; expected/prohibited stay outside the agent.
                 expert = await asyncio.wait_for(
                     _run_specialist(asyncio.Semaphore(1), case.clause, case.risk_dim, state, rag), 240,
@@ -88,11 +97,16 @@ async def run(output: Path, concurrency: int = 2, ids: str = "") -> int:
                 state["errors"] = list(expert["diagnostics"])
                 if expert["coverage_issues"]:
                     state["errors"].append("关键依据未完整展示")
+                row["specialist_seconds"] = round(time.perf_counter() - tick - row["retrieval_seconds"], 2)
+                stage = "gate"
                 gated = await asyncio.wait_for(gate_node(state), 180)
                 row.update({"initial_risk_points": expert["initial_result"],
                             "audit_status": expert["audit_status"], "pre_gate_risk_points": expert["result"],
+                            "audit_unresolved": expert.get("audit_unresolved", []),
                             "final_risk_points": gated["gated"], "errors": gated["errors"],
                             "evidence_context": expert["evidence_context"]})
+                row["gate_seconds"] = round(time.perf_counter() - tick - row["retrieval_seconds"] - row["specialist_seconds"], 2)
+                stage = "judge"
                 judge = await sf.chat_structured([
                     {"role": "system", "content": load_prompt("eval_critical")},
                     {"role": "user", "content": json.dumps({
@@ -118,6 +132,8 @@ async def run(output: Path, concurrency: int = 2, ids: str = "") -> int:
                 if stopped.is_set():
                     row["evaluation_status"] = "blocked_provider"
                 row["exception"] = type(exc).__name__
+                row["failed_stage"] = stage
+                row["http_status"] = getattr(exc, "status_code", None)
             row["elapsed_seconds"] = round(time.perf_counter() - tick, 2)
             with (checkpoints / f"{case.id}.json").open("x", encoding="utf-8") as handle:
                 json.dump(row, handle, ensure_ascii=False, indent=2)
@@ -141,6 +157,7 @@ async def run(output: Path, concurrency: int = 2, ids: str = "") -> int:
         "coverage_comparison": "same live top3 chunks: semantic-only 3000 chars vs linked verified bodies",
         "case_set_sha256": hashlib.sha256(json.dumps([asdict(c) for c in cases],
                                                     ensure_ascii=False, sort_keys=True).encode()).hexdigest(),
+        "input_sha256": input_hashes,
         "models": {"review_and_judge": settings.llm_review_model,
                    "completeness_and_gate": settings.llm_review_model},
         "case_count": len(rows), "passed": passed, "failed": len(rows) - passed,

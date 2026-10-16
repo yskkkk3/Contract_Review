@@ -144,13 +144,7 @@ async def _run_specialist(
         diagnostics: list[str] = []
         provider_unavailable = False
 
-        user_msg = (
-            f"【合同条款】\n{chunk}\n\n"
-            f"请按审阅工作流检索证据后，输出该条款在【{risk_dim}】维度的审阅结果 JSON：\n"
-            "{\"risk_points\": [{\"original_content\": \"条款原文摘录\", \"risk_analysis\": \"风险分析\", "
-            "\"risk_level\": \"高|中|低\", \"suggested_content\": \"修改建议\", \"evidence_refs\": [\"引用的文档id\"]}]}\n"
-            "若该条款在本维度无风险，输出 {\"risk_points\": []}。"
-        )
+        user_msg = load_prompt("specialist_task", chunk=chunk, risk_dim=risk_dim)
         background = [
             {"clause_index": index, "text": clause[:600]}
             for index, clause in enumerate(state["chunks"])
@@ -207,6 +201,7 @@ async def _run_specialist(
 
         initial_points = [dict(point) for point in points]
         audit_status = "not_run"
+        audit_unresolved: list[str] = []
         if isinstance(rag, RAGService):
             supplement = rag.legal_supplement(chunk, risk_dim, ctx["evidence_seen"])
         if (supplement and supplement.coverage.facets and settings.agent_evidence_audit_enabled
@@ -232,6 +227,7 @@ async def _run_specialist(
                         raise ValueError("Invalid audited risk points")
                     points = audited_points
                     audit_status = audit["status"]
+                    audit_unresolved = audit["unresolved"]
                     if audit["status"] == "incomplete" or audit["unresolved"]:
                         diagnostics.append("完整性复核仍有关键依据或材料待核实")
                 else:
@@ -255,6 +251,7 @@ async def _run_specialist(
             "coverage_issues": supplement.coverage.missing if supplement else [],
             "diagnostics": diagnostics,
             "initial_result": initial_points, "audit_status": audit_status,
+            "audit_unresolved": audit_unresolved,
         }
 
 
