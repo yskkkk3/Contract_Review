@@ -8,7 +8,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
 from app.core.config import get_settings
 
@@ -54,12 +54,14 @@ class LLMClient:
             api_key=self.api_key,
             timeout=self.timeout,
             max_retries=1,
+            http_client=DefaultAsyncHttpxClient(trust_env=settings.llm_http_trust_env),
         )
         self._embedding_openai = AsyncOpenAI(
             base_url=self.embedding_base_url,
             api_key=self.embedding_api_key,
             timeout=self.timeout,
             max_retries=1,
+            http_client=DefaultAsyncHttpxClient(trust_env=settings.llm_http_trust_env),
         )
         self._http: httpx.AsyncClient | None = None
         # 应用层并发限流：所有 LLM 调用共享信号量，防止突发请求打满供应商推理队列
@@ -99,6 +101,7 @@ class LLMClient:
                     "Content-Type": "application/json",
                 },
                 timeout=httpx.Timeout(120.0, connect=10.0),
+                trust_env=settings.llm_http_trust_env,
             )
         return self._http
 

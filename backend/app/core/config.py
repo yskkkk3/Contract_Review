@@ -136,6 +136,7 @@ class Settings(BaseSettings):
     metrics_window_size: int = 200      # 滑动窗口样本数
     llm_prompt_cache: bool = False      # 仅 SiliconFlow 等支持 cache_prompt 的供应商可开启
     llm_brief_disable_thinking: bool | None = None  # None仅官网自动处理；兼容中转可显式开启
+    llm_http_trust_env: bool = True  # 含系统代理；本地代理故障时可显式关闭
     max_concurrent_llm: int = 4         # LLM 并发上限（应用层信号量，防突发打满供应商）
     chat_stream_timeout: float = 30.0   # 聊天流式超时（秒）
     review_stream_timeout: float = 120.0  # 审阅流式超时（秒）

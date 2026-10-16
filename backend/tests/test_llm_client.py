@@ -34,11 +34,28 @@ def fake_openai(monkeypatch):
 
     class _FakeAsyncOpenAI:
         def __init__(self, **kwargs):
+            self.init_kwargs = kwargs
             self.chat = type("Chat", (), {"completions": type("Comp", (), {"create": None})()})()
             self.embeddings = type("Emb", (), {"create": None})()
 
     monkeypatch.setattr(client_mod, "AsyncOpenAI", _FakeAsyncOpenAI)
     return _FakeAsyncOpenAI
+
+
+@pytest.mark.parametrize("trust_env", [True, False])
+async def test_proxy_policy_applies_to_inference_embedding_and_rerank(monkeypatch, fake_openai, trust_env):
+    monkeypatch.setattr(client_mod.settings, "llm_http_trust_env", trust_env)
+    client = LLMClient()
+    inference = client._openai.init_kwargs["http_client"]
+    embedding = client._embedding_openai.init_kwargs["http_client"]
+    try:
+        assert inference.trust_env is trust_env
+        assert embedding.trust_env is trust_env
+        assert client.http.trust_env is trust_env
+    finally:
+        await inference.aclose()
+        await embedding.aclose()
+        await client.aclose()
 
 
 @pytest.mark.asyncio

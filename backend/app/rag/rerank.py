@@ -90,6 +90,7 @@ async def rerank_evidence(
                     )},
                 ],
                 model=settings.llm_intent_model, temperature=0, max_tokens=1024, brief=True,
+                response_format={"type": "json_object"},
             ),
             timeout=settings.rag_evidence_rerank_timeout,
         )
