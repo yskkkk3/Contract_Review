@@ -80,7 +80,10 @@ class LLMClient:
 
     def _task_options(self, kwargs: dict, brief: bool) -> dict:
         """短结构化任务不应把输出预算全部消耗在 DeepSeek thinking 中。"""
-        if brief and urlsplit(self.base_url).hostname == "api.deepseek.com":
+        disable_thinking = settings.llm_brief_disable_thinking
+        if disable_thinking is None:
+            disable_thinking = urlsplit(self.base_url).hostname == "api.deepseek.com"
+        if brief and disable_thinking:
             extra = dict(kwargs.get("extra_body") or {})
             extra.setdefault("thinking", {"type": "disabled"})
             kwargs["extra_body"] = extra

@@ -114,6 +114,7 @@ async def test_prompt_cache_disabled(monkeypatch, fake_openai):
 
 @pytest.mark.asyncio
 async def test_brief_deepseek_tasks_preserve_output_budget(monkeypatch, fake_openai):
+    monkeypatch.setattr(client_mod.settings, "llm_brief_disable_thinking", None)
     client = LLMClient()
     client.base_url = "https://api.deepseek.com/v1"
     client._prompt_cache = True
@@ -132,6 +133,7 @@ async def test_brief_deepseek_tasks_preserve_output_budget(monkeypatch, fake_ope
 
 @pytest.mark.asyncio
 async def test_brief_other_providers_receive_no_deepseek_options(monkeypatch, fake_openai):
+    monkeypatch.setattr(client_mod.settings, "llm_brief_disable_thinking", None)
     client = LLMClient()
     client.base_url = "https://example.org/v1"
     client._prompt_cache = False
@@ -142,6 +144,30 @@ async def test_brief_other_providers_receive_no_deepseek_options(monkeypatch, fa
         return _FakeResp()
 
     monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    await client.chat([], brief=True)
+    assert "extra_body" not in captured
+
+
+@pytest.mark.asyncio
+async def test_brief_thinking_control_is_explicit_for_compatible_relays(monkeypatch, fake_openai):
+    client = LLMClient()
+    client.base_url = "https://relay.example/v1"
+    client._prompt_cache = False
+    captured = {}
+
+    async def create(**kwargs):
+        captured.clear()
+        captured.update(kwargs)
+        return _FakeResp('{"ok":true}')
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    monkeypatch.setattr(client_mod.settings, "llm_brief_disable_thinking", True)
+    await client.chat([], brief=True)
+    assert captured["extra_body"]["thinking"] == {"type": "disabled"}
+    await client.chat([], brief=False)
+    assert "extra_body" not in captured
+    monkeypatch.setattr(client_mod.settings, "llm_brief_disable_thinking", False)
+    client.base_url = "https://api.deepseek.com"
     await client.chat([], brief=True)
     assert "extra_body" not in captured
 
