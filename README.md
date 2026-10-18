@@ -76,7 +76,7 @@ flowchart TD
 
 审阅知识库分为校内采购制度、采购相关法规和合同模板三层，仓库目前包含 **65 篇本地文本语料**。已核对的法规摘要带官方来源、版本、生效日期和适用范围；2026-10-16 隔离重建保留5篇公开学校页面，共70篇、486个分块，实际数量随采集及重建结果变化。未标注版本的旧资料仍须核实。
 
-审阅会针对21组主题补查关键条文、适用条件与例外，目前维护53项依据核对项和35个结论敏感场景。离线资料展示检查已通过；真实审阅复测因模型账户余额不足中断，最终效果仍待验证，见 [关键法律证据核查报告](docs/legal-evidence-audit-2026-10-16.md)。
+审阅会针对21组主题补查关键条文、适用条件与例外，目前维护53项依据核对项和35个结论敏感场景。实际索引资料展示检查通过。当前按仅使用DeepSeek Flash的配置进行独立真实验收；此前Pro配置的结果仅作为历史记录，不能替代Flash成绩，见 [此前验收记录](docs/legal-acceptance-2026-10-16.md)。
 
 ```mermaid
 flowchart LR
@@ -211,7 +211,8 @@ ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:6333:127.0.0.1:6333 <ssh-user>@<
 
 | 能力 | 关键配置 | 使用说明 |
 | --- | --- | --- |
-| 审阅与问答 | `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_REVIEW_MODEL`、`LLM_CHAT_MODEL`、`LLM_INTENT_MODEL` | 默认接入 DeepSeek，模型名按账户可用型号填写 |
+| 审阅与问答 | `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_REVIEW_MODEL`、`LLM_CHAT_MODEL`、`LLM_INTENT_MODEL` | 默认使用 DeepSeek Flash，模型名按账户可用型号填写 |
+| 模型成本限制 | `LLM_ALLOWED_MODELS` | 可选逗号分隔白名单；示例仅允许 Flash，切换模型ID时同步修改；仅限制推理，百炼向量和精排独立配置 |
 | 向量索引 | `EMBEDDING_BASE_URL`、`EMBEDDING_API_KEY`、`EMBEDDING_MODEL`、`EMBEDDING_DIMENSIONS` | 模型维度应与 Qdrant 集合一致 |
 | 检索精排 | `RERANK_URL`、`RERANK_API_KEY`、`RERANK_MODEL` | URL 填写完整重排接口地址 |
 | 云端 OCR | `OCR_BASE_URL`、`OCR_API_KEY`、`OCR_MODEL`、`OCR_MAX_PAGES` | 在 `DOC_PARSER_ENGINES` 中显式加入 `cloud_ocr`；Key 留空时可复用百炼 `EMBEDDING_API_KEY` |
