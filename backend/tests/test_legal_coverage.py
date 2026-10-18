@@ -102,6 +102,7 @@ async def test_gate_receives_real_evidence_and_fails_closed_when_check_unavailab
     monkeypatch.setattr(gate, "get_sf_client", Client)
     assert await gate._llm_check({"risk_analysis": "待核验"}, "源条款", "实际正文与例外")
     assert captured["evidence_context"] == "实际正文与例外"
+    assert captured["accepted_risk_points"] == []
 
     class Unavailable:
         async def chat_structured(self, *args, **kwargs):
@@ -109,6 +110,37 @@ async def test_gate_receives_real_evidence_and_fails_closed_when_check_unavailab
 
     monkeypatch.setattr(gate, "get_sf_client", Unavailable)
     assert await gate._llm_check({}, "源条款", "正文") is False
+
+
+def test_failed_judge_requires_valid_grounded_appeal_to_pass():
+    from scripts.eval_critical import _judge_passed, _valid_judge
+
+    failed = {"passed": False, "missed": ["遗漏"], "unsupported": [],
+              "explanation": "首轮失败"}
+    overturned = {"passed": True, "missed": [], "unsupported": [],
+                  "explanation": "原文已有对应内容，撤销首轮判断"}
+    malformed = {"passed": True, "missed": "", "unsupported": [], "explanation": ""}
+    inconsistent = {"passed": False, "missed": ["该项不能成立"], "unsupported": [],
+                    "explanation": "全部缺陷均撤销，未发现其他实质缺陷，改为通过"}
+    inconsistent_appeal = {
+        "passed": False,
+        "missed": [],
+        "unsupported": ["首轮缺陷不能成立"],
+        "explanation": "首轮两项均不能成立，故撤销全部缺陷，改判通过。",
+    }
+    assert _valid_judge(failed) and not _judge_passed(failed)
+    assert _valid_judge(overturned) and _judge_passed(overturned)
+    assert not _valid_judge(malformed) and not _judge_passed(malformed)
+    assert not _valid_judge(inconsistent) and not _judge_passed(inconsistent)
+    assert not _valid_judge(inconsistent_appeal) and not _judge_passed(inconsistent_appeal)
+
+
+def test_critical_judge_prompt_preserves_software_specific_modification_rule():
+    from app.agent.prompts import load_prompt
+
+    prompt = load_prompt("eval_critical")
+    assert "计算机软件条例" in prompt
+    assert "不得机械套用普通作品修改权规则" in prompt
 
 
 def test_one_confirmed_high_risk_is_not_summarized_as_low():
@@ -208,6 +240,23 @@ async def test_successful_completeness_recovery_clears_transient_specialist_erro
     assert result["audit_status"] == "revised"
     assert len(result["result"]) == 1
     assert result["diagnostics"] == []
+
+
+def test_conditionable_sensitive_review_is_not_blocked_by_followup_materials():
+    from app.agent.nodes.specialist import _can_complete_with_conditioned_finding
+
+    clause = (
+        "校园平台处理健康类敏感个人信息，已提供具体法律依据证明属于履行法定职责所必需，"
+        "非基于同意；仍实施必要性审查、安全措施和影响评估。"
+    )
+    evidence = (
+        "个人信息保护法·敏感信息与影响评估：敏感个人信息须有特定目的和充分必要性；"
+        "处理前进行个人信息保护影响评估并留存记录。"
+    )
+    assert _can_complete_with_conditioned_finding(clause, evidence, [], [])
+    assert not _can_complete_with_conditioned_finding(
+        clause, evidence, [], ["缺少敏感信息规则正文"],
+    )
 
 
 async def test_gate_rejects_missing_verdict_and_never_streams_rejected_result(monkeypatch):

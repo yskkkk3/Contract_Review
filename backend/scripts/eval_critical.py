@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import re
 import sys
 import time
 from dataclasses import asdict
@@ -40,7 +41,47 @@ JUDGE_SCHEMA = {
 }
 
 
-async def run(output: Path, concurrency: int = 2, ids: str = "") -> int:
+def _valid_judge(value: object) -> bool:
+    schema_valid = (
+        isinstance(value, dict)
+        and isinstance(value.get("passed"), bool)
+        and isinstance(value.get("missed"), list)
+        and all(isinstance(item, str) for item in value["missed"])
+        and isinstance(value.get("unsupported"), list)
+        and all(isinstance(item, str) for item in value["unsupported"])
+        and isinstance(value.get("explanation"), str)
+    )
+    if not schema_valid:
+        return False
+    if value["passed"]:
+        return not value["missed"] and not value["unsupported"]
+    if not value["missed"] and not value["unsupported"]:
+        return False
+    explanation = value["explanation"]
+    return not re.search(
+        r"(?:改判|改为|判定为|应予|应当|故予以)通过|"
+        r"(?:撤销[^。；]{0,20}(?:全部|所有)?(?:缺陷|遗漏|不当主张)|"
+        r"(?:缺陷|遗漏|不当主张)[^。；]{0,20}(?:全部|所有)?撤销)|"
+        r"未发现(?:其他)?实质缺陷",
+        explanation,
+    )
+
+
+def _judge_passed(value: object) -> bool:
+    return bool(
+        _valid_judge(value)
+        and value["passed"]
+        and not value["missed"]
+        and not value["unsupported"]
+    )
+
+
+async def run(
+    output: Path,
+    concurrency: int = 2,
+    ids: str = "",
+    fail_fast: bool = False,
+) -> int:
     if output.exists():
         raise FileExistsError(f"Refusing to overwrite report: {output}")
     if not 1 <= concurrency <= 4:
@@ -124,13 +165,42 @@ async def run(output: Path, concurrency: int = 2, ids: str = "") -> int:
                     }, ensure_ascii=False)},
                 ], json_schema=JUDGE_SCHEMA, model=settings.llm_review_model,
                     temperature=0, max_tokens=4096)
-                valid = (isinstance(judge, dict) and isinstance(judge.get("passed"), bool)
-                         and isinstance(judge.get("missed"), list)
-                         and isinstance(judge.get("unsupported"), list)
-                         and isinstance(judge.get("explanation"), str))
+                row["judge_initial"] = judge
+                if _valid_judge(judge) and not _judge_passed(judge):
+                    stage = "judge_appeal"
+                    appeal = await sf.chat_structured([
+                        {"role": "system", "content": load_prompt("eval_critical_appeal")},
+                        {"role": "user", "content": json.dumps({
+                            "clause": case.clause, "risk_dim": case.risk_dim,
+                            "expected": case.expected, "prohibited": case.prohibited,
+                            "evidence_context": expert["evidence_context"],
+                            "final_risk_points": gated["gated"], "first_judge": judge,
+                        }, ensure_ascii=False)},
+                    ], json_schema=JUDGE_SCHEMA, model=settings.llm_review_model,
+                        temperature=0, max_tokens=4096)
+                    row["judge_appeal"] = appeal
+                    if not _valid_judge(appeal):
+                        stage = "judge_appeal_consistency"
+                        appeal = await sf.chat_structured([
+                            {"role": "system", "content": load_prompt("eval_critical_appeal")},
+                            {"role": "user", "content": json.dumps({
+                                "clause": case.clause, "risk_dim": case.risk_dim,
+                                "expected": case.expected, "prohibited": case.prohibited,
+                                "evidence_context": expert["evidence_context"],
+                                "final_risk_points": gated["gated"], "first_judge": judge,
+                                "previous_appeal": appeal,
+                                "consistency_error": (
+                                    "previous_appeal的passed、缺陷数组与explanation自相矛盾；"
+                                    "若缺陷均撤销，必须passed=true且两个数组为空；否则数组只保留仍成立的缺陷。"
+                                ),
+                            }, ensure_ascii=False)},
+                        ], json_schema=JUDGE_SCHEMA, model=settings.llm_review_model,
+                            temperature=0, max_tokens=4096)
+                        row["judge_appeal_consistency"] = appeal
+                    if _valid_judge(appeal):
+                        judge = appeal
                 row["judge"] = judge
-                row["passed"] = bool(valid and judge["passed"] and not judge["missed"]
-                                     and not judge["unsupported"] and not gated["errors"]
+                row["passed"] = bool(_judge_passed(judge) and not gated["errors"]
                                      and not bundle.coverage.missing
                                      and not row["supplemented"]["missing_documents"])
             except Exception as exc:  # noqa: BLE001 Evaluate other cases and retain failed trace.
@@ -149,19 +219,44 @@ async def run(output: Path, concurrency: int = 2, ids: str = "") -> int:
                   f"{row['elapsed_seconds']}s", flush=True)
             return row
 
+    failed_fast = False
     try:
         # Fail before queueing the suite when credentials/balance are already unavailable.
         await sf.chat([{"role": "user", "content": "回复OK"}],
                       model=settings.llm_review_model, max_tokens=8, brief=True)
         await rag.ensure_ready()
-        rows = await asyncio.gather(*(evaluate(case) for case in cases))
+        tasks = [asyncio.create_task(evaluate(case)) for case in cases]
+        if fail_fast:
+            rows = []
+            for completed in asyncio.as_completed(tasks):
+                row = await completed
+                rows.append(row)
+                if not row["passed"]:
+                    failed_fast = True
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    outcomes = await asyncio.gather(*tasks, return_exceptions=True)
+                    completed_rows = {
+                        item["id"]: item for item in outcomes if isinstance(item, dict)
+                    }
+                    completed_rows.update({item["id"]: item for item in rows})
+                    rows = [
+                        completed_rows[case.id]
+                        for case in cases
+                        if case.id in completed_rows
+                    ]
+                    break
+        else:
+            rows = await asyncio.gather(*tasks)
     finally:
         await rag.close()
         await sf.aclose()
     passed = sum(row["passed"] for row in rows)
     report = {
         "created_at": datetime.now(UTC).isoformat(),
-        "method": "model-assisted synthetic clause regression; not certified legal accuracy",
+        "method": "model-assisted synthetic clause regression with failed-verdict appeal; "
+                  "not certified legal accuracy",
         "coverage_comparison": "same live top3 chunks: semantic-only 3000 chars vs linked verified bodies",
         "case_set_sha256": hashlib.sha256(json.dumps([asdict(c) for c in cases],
                                                     ensure_ascii=False, sort_keys=True).encode()).hexdigest(),
@@ -172,8 +267,13 @@ async def run(output: Path, concurrency: int = 2, ids: str = "") -> int:
         "brief_reasoning_effort": settings.llm_brief_reasoning_effort,
         "models": {"review_and_judge": settings.llm_review_model,
                    "completeness_and_gate": settings.llm_review_model},
+        "requested_case_count": len(cases),
         "case_count": len(rows), "passed": passed, "failed": len(rows) - passed,
-        "evaluation_status": "blocked_provider" if stopped.is_set() else "finished",
+        "evaluation_status": (
+            "blocked_provider" if stopped.is_set()
+            else "stopped_on_failure" if failed_fast
+            else "finished"
+        ),
         "elapsed_seconds": round(time.perf_counter() - started, 2), "detail": rows,
     }
     with output.open("x", encoding="utf-8") as handle:
@@ -187,5 +287,10 @@ if __name__ == "__main__":
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--concurrency", default=2, type=int)
     parser.add_argument("--ids", default="", help="Comma-separated case IDs; default all critical cases")
+    parser.add_argument(
+        "--fail-fast",
+        action="store_true",
+        help="Stop and cancel remaining cases immediately after the first failed result",
+    )
     args = parser.parse_args()
-    sys.exit(asyncio.run(run(args.output, args.concurrency, args.ids)))
+    sys.exit(asyncio.run(run(args.output, args.concurrency, args.ids, args.fail_fast)))

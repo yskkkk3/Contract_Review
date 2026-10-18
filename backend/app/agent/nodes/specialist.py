@@ -10,6 +10,10 @@ import asyncio
 import json
 
 from app.agent.prompts import load_prompt, load_risk_dim_prompt
+from app.agent.rules.legal_guards import (
+    guarded_legal_coverage_complete,
+    required_legal_findings,
+)
 from app.agent.state import ReviewState
 from app.agent.tools.executor import call_llm_with_tools
 from app.agent.tools.registry import default_tools
@@ -46,6 +50,20 @@ AUDIT_SCHEMA = {
     },
     "required": ["status", "unresolved", "risk_points"],
 }
+
+
+def _can_complete_with_conditioned_finding(
+    clause: str,
+    evidence_context: str,
+    points: list[dict],
+    coverage_missing: list[str],
+) -> bool:
+    """Treat missing transaction materials as follow-up facts when law supports a safe opinion."""
+    if coverage_missing:
+        return False
+    return guarded_legal_coverage_complete(clause, evidence_context, points) or bool(
+        required_legal_findings(clause, evidence_context, points)
+    )
 
 def _normalize_level(level: str) -> str:
     """多供应商字段漂移归一化：high→高 / medium→中 / low→低。"""
@@ -234,7 +252,18 @@ async def _run_specialist(
                     points = audited_points
                     audit_status = audit["status"]
                     audit_unresolved = audit["unresolved"]
-                    if audit["status"] == "incomplete" or audit["unresolved"]:
+                    if (
+                        (audit_status == "incomplete" or audit_unresolved)
+                        and _can_complete_with_conditioned_finding(
+                            chunk,
+                            supplement.text,
+                            audited_points,
+                            supplement.coverage.missing,
+                        )
+                    ):
+                        audit_status = "revised"
+                        audit_unresolved = []
+                    if audit_status == "incomplete" or audit_unresolved:
                         diagnostics.append("完整性复核仍有关键依据或材料待核实")
                     else:
                         # The completeness pass independently sees the clause and verified evidence.

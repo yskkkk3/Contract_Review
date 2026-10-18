@@ -123,6 +123,44 @@ async def test_gate_passes_specific_llm_issues_to_repair(monkeypatch):
     assert seen == ["建议未区分大型企业适用规则"]
 
 
+async def test_gate_filters_llm_rejected_candidate_without_failing_completed_review(monkeypatch):
+    from app.agent.nodes import gate
+
+    point = {"original_content": "已有明确约定", "risk_analysis": "可选完善",
+             "risk_level": "低", "suggested_content": "增加非必要流程", "evidence_refs": []}
+
+    async def revise(*args):
+        return {"decision": "revise", "issues": ["该意见不构成实质风险"]}
+
+    async def no_fix(*args):
+        return None
+
+    monkeypatch.setattr(gate, "_llm_check", revise)
+    monkeypatch.setattr(gate, "_retry_fix", no_fix)
+    result = await gate.gate_node({"chunks": ["已有明确约定"], "errors": [],
+                                   "specialist_outputs": [{"chunk_index": 0,
+                                                           "risk_dim": "主体资格与合规",
+                                                           "result": [point]}]})
+    assert result == {"gated": [], "errors": []}
+
+
+async def test_gate_keeps_unrepaired_structure_failure_fatal(monkeypatch):
+    from app.agent.nodes import gate
+
+    point = {"original_content": "拼接原文", "risk_analysis": "风险",
+             "risk_level": "中", "suggested_content": "修改", "evidence_refs": []}
+
+    async def no_fix(*args):
+        return None
+
+    monkeypatch.setattr(gate, "_retry_fix", no_fix)
+    result = await gate.gate_node({"chunks": ["实际合同原文"], "errors": [],
+                                   "specialist_outputs": [{"chunk_index": 0,
+                                                           "risk_dim": "主体资格与合规",
+                                                           "result": [point]}]})
+    assert result["gated"] == [] and result["errors"]
+
+
 def test_arbitration_merge_and_sort():
     points = [
         {"chunk_index": 2, "original_content": "B", "risk_analysis": "a1", "risk_level": "中",

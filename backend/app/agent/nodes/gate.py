@@ -5,7 +5,11 @@
 import json
 
 from app.agent.prompts import load_prompt
-from app.agent.rules.legal_guards import legal_conclusion_errors, required_legal_findings
+from app.agent.rules.legal_guards import (
+    guarded_legal_coverage_complete,
+    legal_conclusion_errors,
+    required_legal_findings,
+)
 from app.agent.state import ReviewState
 from app.core.config import get_settings
 from app.rag.client import get_sf_client
@@ -40,7 +44,12 @@ def _rule_check(point: dict, chunk: str | None = None) -> list[str]:
     return errors
 
 
-async def _llm_check(point: dict, chunk: str, evidence_context: str = "") -> dict | bool:
+async def _llm_check(
+    point: dict,
+    chunk: str,
+    evidence_context: str = "",
+    accepted_points: list[dict] | None = None,
+) -> dict | bool:
     try:
         prompt = load_prompt("gate")
         data = await get_sf_client().chat_structured(
@@ -48,6 +57,7 @@ async def _llm_check(point: dict, chunk: str, evidence_context: str = "") -> dic
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": json.dumps({
                     "clause": chunk, "risk_point": point, "evidence_context": evidence_context,
+                    "accepted_risk_points": accepted_points or [],
                 }, ensure_ascii=False)},
             ],
             json_schema=GATE_SCHEMA,
@@ -111,15 +121,20 @@ async def gate_node(state: ReviewState) -> dict:
     errors = list(state.get("errors", []))
     for output in state["specialist_outputs"]:
         accepted_for_output: list[dict] = []
+        unresolved_structure_failure = False
+        unresolved_legal_failure = False
+        gate_unavailable = False
         for point in output.get("result", []):
             chunk = state["chunks"][output["chunk_index"]]
             evidence_context = output.get("evidence_context", "")
-            point_errors = _rule_check(point, chunk) + legal_conclusion_errors(point, chunk, evidence_context)
+            structure_errors = _rule_check(point, chunk)
+            legal_errors = legal_conclusion_errors(point, chunk, evidence_context)
+            point_errors = structure_errors + legal_errors
             if point_errors:
                 decision, assessment_issues = "revise", []
             else:
                 decision, assessment_issues = _normalize_assessment(
-                    await _llm_check(point, chunk, evidence_context)
+                    await _llm_check(point, chunk, evidence_context, accepted_for_output)
                 )
             if decision == "drop" and not point_errors:
                 # A sound clause or a purely optional improvement is not a reportable risk.
@@ -133,7 +148,9 @@ async def gate_node(state: ReviewState) -> dict:
                     if fixed else ["修复未返回有效风险点"]
                 )
                 fixed_decision, _ = (
-                    _normalize_assessment(await _llm_check(fixed, chunk, evidence_context))
+                    _normalize_assessment(
+                        await _llm_check(fixed, chunk, evidence_context, accepted_for_output)
+                    )
                     if fixed and not fixed_errors else ("revise", [])
                 )
                 if fixed and not fixed_errors and fixed_decision == "accept":
@@ -147,7 +164,15 @@ async def gate_node(state: ReviewState) -> dict:
                 elif fixed and not point_errors and fixed_decision == "drop":
                     continue
                 else:
-                    errors.append(f"条款{output['chunk_index']}部分意见未通过证据与事实核验")
+                    # A valid LLM gate can safely filter its own rejected candidate. A hard rule
+                    # failure, or an unavailable gate, still marks the review incomplete unless a
+                    # deterministic evidence-backed finding replaces that exact guarded issue.
+                    if structure_errors:
+                        unresolved_structure_failure = True
+                    if legal_errors:
+                        unresolved_legal_failure = True
+                    elif assessment_issues == ["模型质检未返回有效分类"]:
+                        gate_unavailable = True
                     continue
             point["risk_dim"] = output["risk_dim"]
             point["chunk_index"] = output["chunk_index"]
@@ -162,7 +187,8 @@ async def gate_node(state: ReviewState) -> dict:
                 pass
         chunk = state["chunks"][output["chunk_index"]]
         evidence_context = output.get("evidence_context", "")
-        for point in required_legal_findings(chunk, evidence_context, accepted_for_output):
+        protected = required_legal_findings(chunk, evidence_context, accepted_for_output)
+        for point in protected:
             point["risk_dim"] = output["risk_dim"]
             point["chunk_index"] = output["chunk_index"]
             gated.append(point)
@@ -174,4 +200,11 @@ async def gate_node(state: ReviewState) -> dict:
                 })
             except Exception:  # noqa: BLE001 非流式上下文兼容
                 pass
+        critical_coverage_complete = bool(protected) or guarded_legal_coverage_complete(
+            chunk, evidence_context, accepted_for_output + protected,
+        )
+        if (unresolved_structure_failure
+                or ((gate_unavailable or unresolved_legal_failure)
+                    and not critical_coverage_complete)):
+            errors.append(f"条款{output['chunk_index']}部分意见未通过证据与事实核验")
     return {"gated": gated, "errors": errors}
