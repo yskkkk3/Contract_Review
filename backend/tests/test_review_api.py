@@ -144,6 +144,8 @@ def test_review_sse_flow(client, auth_headers, monkeypatch, tmp_path):
     assert "message" in body
     assert "end" in body
     assert '"risk_dim": "财务与付款"' in body
+    # 图未提供完整性状态时，不能向用户暗示已完整核验。
+    assert '"review_status": "incomplete"' in body
 
     # 验证 DB 落库
     r = client.get("/api/sessions?session_type=review", headers=auth_headers)

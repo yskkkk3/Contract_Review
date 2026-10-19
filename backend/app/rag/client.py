@@ -5,13 +5,39 @@ chat / embeddings 使用 OpenAI SDK；rerank 使用供应商兼容的 HTTP 接�
 """
 import asyncio
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
 from app.core.config import get_settings
 
 settings = get_settings()
+
+
+def provider_status_code(exc: Exception) -> int | None:
+    """兼容OpenAI SDK与HTTPX供应商扩展接口的状态码。"""
+    return getattr(exc, "status_code", None) or getattr(getattr(exc, "response", None), "status_code", None)
+
+
+def provider_error_code(exc: Exception) -> str | None:
+    body = getattr(exc, "body", None)
+    if not isinstance(body, dict):
+        response = getattr(exc, "response", None)
+        try:
+            body = response.json() if response is not None else None
+        except ValueError:
+            body = None
+    if isinstance(body, dict):
+        error = body.get("error", body)
+        if isinstance(error, dict) and isinstance(error.get("code"), str):
+            return error["code"]
+    return None
+
+
+def is_provider_access_error(exc: Exception) -> bool:
+    """认证、余额或权限失败不能通过换输出格式重试来恢复。"""
+    return provider_status_code(exc) in {401, 402, 403} or provider_error_code(exc) == "Arrearage"
 
 
 def _extract_json(raw: str) -> dict | None:
@@ -34,6 +60,15 @@ def _extract_json(raw: str) -> dict | None:
     return None
 
 
+def _final_content(message: Any) -> str:
+    """部分中转将reasoning_content重复拼进content，只保留可区分的最终正文。"""
+    content = message.content or ""
+    reasoning = getattr(message, "reasoning_content", None)
+    if isinstance(reasoning, str) and reasoning and content.startswith(reasoning):
+        return content[len(reasoning):].lstrip()
+    return content
+
+
 class LLMClient:
     def __init__(self) -> None:
         self.base_url = settings.effective_llm_base_url
@@ -42,18 +77,23 @@ class LLMClient:
         self.embedding_api_key = settings.effective_embedding_api_key
         self.rerank_url = settings.effective_rerank_url
         self.rerank_api_key = settings.effective_rerank_api_key
-        self.timeout = 120.0
+        self.timeout = httpx.Timeout(120.0, connect=10.0)
+        self._allowed_models = {
+            item.strip() for item in settings.llm_allowed_models.split(",") if item.strip()
+        }
         self._openai = AsyncOpenAI(
             base_url=self.base_url,
             api_key=self.api_key,
             timeout=self.timeout,
             max_retries=1,
+            http_client=DefaultAsyncHttpxClient(trust_env=settings.llm_http_trust_env),
         )
         self._embedding_openai = AsyncOpenAI(
             base_url=self.embedding_base_url,
             api_key=self.embedding_api_key,
             timeout=self.timeout,
             max_retries=1,
+            http_client=DefaultAsyncHttpxClient(trust_env=settings.llm_http_trust_env),
         )
         self._http: httpx.AsyncClient | None = None
         # 应用层并发限流：所有 LLM 调用共享信号量，防止突发请求打满供应商推理队列
@@ -72,6 +112,25 @@ class LLMClient:
             kwargs["extra_body"] = extra
         return kwargs
 
+    def _checked_model(self, model: str) -> str:
+        """所有推理入口在发送请求前检查，格式降级也不能越过成本限制。"""
+        if self._allowed_models and model not in self._allowed_models:
+            raise ValueError(f"Inference model {model!r} is not in LLM_ALLOWED_MODELS")
+        return model
+
+    def _task_options(self, kwargs: dict, brief: bool) -> dict:
+        """短结构化任务不应把输出预算全部消耗在 DeepSeek thinking 中。"""
+        disable_thinking = settings.llm_brief_disable_thinking
+        if disable_thinking is None:
+            disable_thinking = urlsplit(self.base_url).hostname == "api.deepseek.com"
+        if brief and disable_thinking:
+            extra = dict(kwargs.get("extra_body") or {})
+            extra.setdefault("thinking", {"type": "disabled"})
+            kwargs["extra_body"] = extra
+        if brief and settings.llm_brief_reasoning_effort:
+            kwargs.setdefault("reasoning_effort", settings.llm_brief_reasoning_effort)
+        return self._apply_cache(kwargs)
+
     @property
     def http(self) -> httpx.AsyncClient:
         """供 rerank 等供应商扩展接口使用。"""
@@ -82,6 +141,7 @@ class LLMClient:
                     "Content-Type": "application/json",
                 },
                 timeout=httpx.Timeout(120.0, connect=10.0),
+                trust_env=settings.llm_http_trust_env,
             )
         return self._http
 
@@ -97,18 +157,19 @@ class LLMClient:
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        brief: bool = False,
         **kwargs: Any,
     ) -> str:
-        model = model or settings.llm_review_model
+        model = self._checked_model(model or settings.llm_review_model)
         async with self._sem:
             resp = await self._openai.chat.completions.create(
                 model=model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                **self._apply_cache(kwargs),
+                **self._task_options(kwargs, brief),
             )
-        return resp.choices[0].message.content or ""
+        return _final_content(resp.choices[0].message)
 
     async def chat_with_tools(
         self,
@@ -124,7 +185,7 @@ class LLMClient:
 
         调用方负责工具循环（见 app/agent/tools/executor.py）。
         """
-        model = model or settings.llm_review_model
+        model = self._checked_model(model or settings.llm_review_model)
         async with self._sem:
             resp = await self._openai.chat.completions.create(
                 model=model,
@@ -135,7 +196,9 @@ class LLMClient:
                 max_tokens=max_tokens,
                 **self._apply_cache(kwargs),
             )
-        return resp.choices[0].message
+        message = resp.choices[0].message
+        message.content = _final_content(message)
+        return message
 
     async def chat_structured(
         self,
@@ -144,6 +207,7 @@ class LLMClient:
         model: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 512,
+        brief: bool = True,
         **kwargs: Any,
     ) -> dict | None:
         """Structured output：response_format=json_schema 返回解析后的 dict。
@@ -151,7 +215,7 @@ class LLMClient:
         供应商不支持 strict json_schema 时回退普通 chat + 正则提取 JSON；
         解析失败返回 None，由调用方降级。
         """
-        model = model or settings.llm_intent_model
+        model = self._checked_model(model or settings.llm_intent_model)
         try:
             async with self._sem:
                 resp = await self._openai.chat.completions.create(
@@ -163,20 +227,25 @@ class LLMClient:
                         "type": "json_schema",
                         "json_schema": {"name": "structured_output", "strict": True, "schema": json_schema},
                     },
-                    **self._apply_cache(kwargs),
+                    **self._task_options(kwargs, brief),
                 )
-            content = resp.choices[0].message.content or ""
+            content = _final_content(resp.choices[0].message)
             parsed = _extract_json(content)
             if parsed is not None:
                 return parsed
-        except Exception:  # noqa: BLE001 供应商不支持 json_schema → 走降级路径
+        except Exception as exc:  # noqa: BLE001 供应商不支持 json_schema → 走降级路径
+            if is_provider_access_error(exc):
+                raise
             pass
         try:
             raw = await self.chat(
-                messages, model=model, temperature=temperature, max_tokens=max_tokens, **kwargs
+                messages, model=model, temperature=temperature, max_tokens=max_tokens,
+                brief=brief, **kwargs,
             )
             return _extract_json(raw)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            if is_provider_access_error(exc):
+                raise
             return None
 
     async def collect_stream(
@@ -189,7 +258,7 @@ class LLMClient:
 
         供非增量场景（gate/arbitration）复用流式通道，顺带统计 token。
         """
-        model = model or settings.llm_chat_model
+        model = self._checked_model(model or settings.llm_chat_model)
         full: list[str] = []
         usage: dict = {}
         kwargs.setdefault("stream_options", {"include_usage": True})
@@ -208,7 +277,7 @@ class LLMClient:
                     "total_tokens": chunk.usage.total_tokens,
                 }
             if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-                full.append(chunk.choices[0].delta.content)
+                full.append(_final_content(chunk.choices[0].delta))
         return "".join(full), usage
 
     async def chat_stream(self, messages: list[dict], model: str | None = None, **kwargs: Any):
@@ -217,7 +286,7 @@ class LLMClient:
         调用方传 stream_options={"include_usage": True} 时，末尾会收到 usage chunk
         （无 content），由调用方统计；生成器本身只产出增量文本。
         """
-        model = model or settings.llm_chat_model
+        model = self._checked_model(model or settings.llm_chat_model)
         async with self._sem:
             stream = await self._openai.chat.completions.create(
                 model=model,
@@ -227,14 +296,16 @@ class LLMClient:
             )
         async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
+                text = _final_content(chunk.choices[0].delta)
+                if text:
+                    yield text
 
     async def chat_stream_events(self, messages: list[dict], model: str | None = None, **kwargs: Any):
         """流式事件生成器：yield ("start", None) → ("delta", text)… → ("usage", dict)。
 
         供需要 TTFT / token 统计的流式链路（chat_service）使用。
         """
-        model = model or settings.llm_chat_model
+        model = self._checked_model(model or settings.llm_chat_model)
         kwargs.setdefault("stream_options", {"include_usage": True})
         async with self._sem:
             stream = await self._openai.chat.completions.create(
@@ -256,7 +327,9 @@ class LLMClient:
                     },
                 )
             if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-                yield ("delta", chunk.choices[0].delta.content)
+                text = _final_content(chunk.choices[0].delta)
+                if text:
+                    yield ("delta", text)
 
     # ---------- embedding（OpenAI SDK） ----------
     async def embed(self, texts: list[str], model: str | None = None) -> list[list[float]]:

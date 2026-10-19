@@ -200,6 +200,7 @@ async def stream_review_events(
                         "summary": summary.get("summary", ""),
                         "suggestion": summary.get("suggestion", ""),
                         "overall_risk": summary.get("overall_risk", "低"),
+                        "review_status": summary.get("review_status", "incomplete"),
                         "metrics": {"total_ms": round(duration_ms, 1), "risk_point_count": len(points)},
                     },
                 },

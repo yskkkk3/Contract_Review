@@ -38,10 +38,11 @@
         <template #header>
           <div class="head">
             <span>审阅结果（SSE 实时流）</span>
-            <el-tag v-if="summary" :type="riskTag(summary.overall_risk)">整体风险：{{ summary.overall_risk }}</el-tag>
+            <el-tag v-if="summary?.review_status === 'incomplete'" type="warning">审阅待补查</el-tag>
+            <el-tag v-else-if="summary" :type="riskTag(summary.overall_risk)">整体风险：{{ summary.overall_risk }}</el-tag>
           </div>
         </template>
-        <el-empty v-if="!riskPoints.length && !running" description="发起审阅后，风险点将实时展示在这里" />
+        <el-empty v-if="!riskPoints.length && !running" :description="summary ? (summary.review_status === 'incomplete' ? '部分依据或意见未完成核验，暂不能判断合同风险' : '当前材料与审阅范围内未发现风险点') : '发起审阅后，风险点将实时展示在这里'" />
         <el-timeline v-if="riskPoints.length">
           <el-timeline-item
             v-for="p in riskPoints"
@@ -68,7 +69,7 @@
             </div>
           </el-timeline-item>
         </el-timeline>
-        <el-alert v-if="summary" :title="`摘要：${summary.summary}`" type="success" :closable="false" style="margin-top: 16px" />
+        <el-alert v-if="summary" :title="`摘要：${summary.summary}`" :type="summary.review_status === 'incomplete' ? 'warning' : 'success'" :closable="false" style="margin-top: 16px" />
         <el-alert v-if="summary && summary.suggestion" :title="`建议：${summary.suggestion}`" type="info" :closable="false" style="margin-top: 8px" />
       </el-card>
     </el-col>

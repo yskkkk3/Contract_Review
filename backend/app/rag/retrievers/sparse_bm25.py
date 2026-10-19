@@ -31,7 +31,10 @@ class BM25Index:
         self._corpus.extend(tokenize(c.text) for c in chunks)
         self._bm25 = BM25Okapi(self._corpus)
 
-    def search(self, query: str, top_k: int = 30, doc_type: str | None = None) -> list[tuple[Chunk, float]]:
+    def search(
+        self, query: str, top_k: int = 30, doc_type: str | None = None,
+        filters: dict | None = None,
+    ) -> list[tuple[Chunk, float]]:
         if not self._bm25:
             return []
         q_tokens = tokenize(query)
@@ -44,6 +47,10 @@ class BM25Index:
             chunk = self._chunks[idx]
             if doc_type and chunk.doc_type != doc_type:
                 continue
+            if filters and any(
+                getattr(chunk, key, chunk.meta.get(key)) != value for key, value in filters.items()
+            ):
+                continue
             out.append((chunk, float(score)))
             if len(out) >= top_k:
                 break
@@ -52,6 +59,10 @@ class BM25Index:
     def save(self, path: str | Path) -> None:
         with open(path, "wb") as f:
             pickle.dump({"chunks": self._chunks, "corpus": self._corpus}, f)
+
+    def document_chunks(self, doc_id: str) -> list[Chunk]:
+        """保留入库顺序读取同一文档的条文，供关键条件补查；不读取上传合同。"""
+        return [chunk for chunk in self._chunks if chunk.doc_id == doc_id]
 
     @classmethod
     def load(cls, path: str | Path) -> "BM25Index":

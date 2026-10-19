@@ -24,14 +24,14 @@ def rule_party_identity(text: str) -> list[dict]:
 
 
 # ---- 财务与付款 ----
-_PREPAY_RE = re.compile(r"预付款[^%0-9]{0,12}(\d+)\s*%|支付.*?(\d+)\s*%")
+_PREPAY_RE = re.compile(r"预付(?:款)?[^%0-9]{0,12}(\d+(?:\.\d+)?)\s*%")
 def rule_prepayment_ratio(text: str) -> list[dict]:
     m = _PREPAY_RE.search(text)
     if m:
-        pct = int(m.group(1) or m.group(2))
-        if pct > 30:
-            return [_make(text[:200], f"预付款比例 {pct}% 超过采购惯例上限 30%，资金占用与供应商违约风险偏高", "高",
-                          "将预付款比例降至 30% 以内或补充履约担保", "财务与付款")]
+        pct = float(m.group(1))
+        if pct >= 100 and not any(word in text for word in ("保函", "担保", "保证保险")):
+            return [_make(text[:200], "条款约定全额预付且本条未见预付款担保，存在履约前资金暴露；需核验其他条款和适用采购要求", "中",
+                          "核验预付款担保及审批要求，结合履约进度协商分期支付或等额预付款保障措施", "财务与付款")]
     return []
 
 
@@ -46,7 +46,7 @@ def rule_amount_consistency(text: str) -> list[dict]:
 def rule_ip_ownership(text: str) -> list[dict]:
     if ("开发" in text or "成果" in text or "源代码" in text) and "知识产权" not in text:
         return [_make(text[:200], "涉及开发/成果条款但未约定知识产权归属，存在权属争议风险", "高",
-                      "明确约定成果知识产权归属（高校惯例归学校）", "知识产权与保密")]
+                      "区分既有成果与定制成果，明确知识产权归属及学校必要的使用、修改和维护权限", "知识产权与保密")]
     return []
 
 
@@ -74,13 +74,6 @@ def rule_acceptance_standard(text: str) -> list[dict]:
 
 
 # ---- 争议解决与管辖 ----
-def rule_arbitration_final(text: str) -> list[dict]:
-    if "仲裁" in text and "终局" in text:
-        return [_make(text[:200], "约定仲裁且一裁终局，对高校方丧失上诉救济机会，需权衡保密性/成本", "中",
-                      "确认仲裁机构明确；若争议金额大可评估诉讼管辖", "争议解决与管辖")]
-    return []
-
-
 _RULES: list[tuple[str, object]] = [
     ("主体资格与合规", rule_party_identity),
     ("财务与付款", rule_prepayment_ratio),
@@ -89,7 +82,6 @@ _RULES: list[tuple[str, object]] = [
     ("知识产权与保密", rule_confidentiality),
     ("违约责任与解除", rule_penalty_base),
     ("验收交付与质保", rule_acceptance_standard),
-    ("争议解决与管辖", rule_arbitration_final),
 ]
 
 

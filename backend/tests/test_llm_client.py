@@ -6,7 +6,7 @@ import asyncio
 import pytest
 
 import app.rag.client as client_mod
-from app.rag.client import LLMClient
+from app.rag.client import LLMClient, _final_content
 
 
 class _FakeChoice:
@@ -27,6 +27,9 @@ class _FakeResp:
 def fake_openai(monkeypatch):
     """CI 无 .env：mock AsyncOpenAI 构造，避免 openai SDK 强制校验 API key。"""
 
+    monkeypatch.setattr(client_mod.settings, "llm_allowed_models", "")
+    monkeypatch.setattr(client_mod.settings, "llm_brief_reasoning_effort", None)
+
     class _FakeCompletions:
         def __init__(self):
             self.chat = type("Chat", (), {"completions": type("Comp", (), {"create": None})()})()
@@ -34,11 +37,124 @@ def fake_openai(monkeypatch):
 
     class _FakeAsyncOpenAI:
         def __init__(self, **kwargs):
+            self.init_kwargs = kwargs
             self.chat = type("Chat", (), {"completions": type("Comp", (), {"create": None})()})()
             self.embeddings = type("Emb", (), {"create": None})()
 
     monkeypatch.setattr(client_mod, "AsyncOpenAI", _FakeAsyncOpenAI)
     return _FakeAsyncOpenAI
+
+
+@pytest.mark.parametrize("reasoning,content,expected", [
+    ("private", "private", ""),
+    ("private", 'private\n{"ok":true}', '{"ok":true}'),
+    ("private", '{"ok":true}', '{"ok":true}'),
+    (None, '{"ok":true}', '{"ok":true}'),
+])
+def test_relay_reasoning_duplicate_is_not_treated_as_final_output(reasoning, content, expected):
+    from types import SimpleNamespace
+
+    assert _final_content(SimpleNamespace(content=content, reasoning_content=reasoning)) == expected
+
+
+async def test_brief_effort_is_opt_in_and_preserves_explicit_request(monkeypatch, fake_openai):
+    client = LLMClient()
+    captured = {}
+
+    async def create(**kwargs):
+        captured.clear()
+        captured.update(kwargs)
+        return _FakeResp("OK")
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    monkeypatch.setattr(client_mod.settings, "llm_brief_reasoning_effort", "low")
+    await client.chat([], brief=True)
+    assert captured["reasoning_effort"] == "low"
+    await client.chat([], brief=True, reasoning_effort="high")
+    assert captured["reasoning_effort"] == "high"
+    await client.chat([], brief=False)
+    assert "reasoning_effort" not in captured
+
+
+async def test_json_inside_duplicated_reasoning_is_not_accepted(monkeypatch, fake_openai):
+    client = LLMClient()
+
+    async def create(**kwargs):
+        text = 'internal consideration {"valid":true}'
+        response = _FakeResp(text)
+        response.choices[0].message.reasoning_content = text
+        return response
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    assert await client.chat_structured([], json_schema={"type": "object"}) is None
+
+
+@pytest.mark.parametrize("method", ["chat", "chat_with_tools", "chat_structured", "collect_stream", "chat_stream", "chat_stream_events"])
+async def test_model_cost_policy_blocks_every_inference_entry_before_network(monkeypatch, fake_openai, method):
+    monkeypatch.setattr(client_mod.settings, "llm_allowed_models", " deepseek-v4.1-flash ")
+    client = LLMClient()
+
+    async def unexpected(**kwargs):
+        pytest.fail("Disallowed model must not reach the provider")
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", unexpected)
+    kwargs = {"model": "deepseek-v4-pro"}
+    if method == "chat_with_tools":
+        kwargs["tools"] = []
+    if method == "chat_structured":
+        kwargs["json_schema"] = {"type": "object"}
+    try:
+        with pytest.raises(ValueError, match="LLM_ALLOWED_MODELS"):
+            result = getattr(client, method)([], **kwargs)
+            if method in {"chat_stream", "chat_stream_events"}:
+                [item async for item in result]
+            else:
+                await result
+    finally:
+        await client._openai.init_kwargs["http_client"].aclose()
+        await client._embedding_openai.init_kwargs["http_client"].aclose()
+
+
+async def test_allowed_model_works_but_misconfigured_default_is_blocked(monkeypatch, fake_openai):
+    monkeypatch.setattr(client_mod.settings, "llm_allowed_models", "deepseek-v4.1-flash")
+    monkeypatch.setattr(client_mod.settings, "llm_review_model", "deepseek-v4-pro")
+    client = LLMClient()
+
+    async def create(**kwargs):
+        assert kwargs["model"] == "deepseek-v4.1-flash"
+        return _FakeResp("OK")
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    try:
+        with pytest.raises(ValueError, match="LLM_ALLOWED_MODELS"):
+            await client.chat([])
+        assert await client.chat([], model="deepseek-v4.1-flash") == "OK"
+    finally:
+        await client._openai.init_kwargs["http_client"].aclose()
+        await client._embedding_openai.init_kwargs["http_client"].aclose()
+
+
+@pytest.mark.parametrize("trust_env", [True, False])
+async def test_proxy_policy_applies_to_inference_embedding_and_rerank(monkeypatch, fake_openai, trust_env):
+    monkeypatch.setattr(client_mod.settings, "llm_http_trust_env", trust_env)
+    client = LLMClient()
+    inference = client._openai.init_kwargs["http_client"]
+    embedding = client._embedding_openai.init_kwargs["http_client"]
+    try:
+        assert inference.trust_env is trust_env
+        assert embedding.trust_env is trust_env
+        assert client.http.trust_env is trust_env
+    finally:
+        await inference.aclose()
+        await embedding.aclose()
+        await client.aclose()
+
+
+def test_connection_deadline_is_distinct_from_model_read_deadline(fake_openai):
+    client = LLMClient()
+    for sdk in [client._openai, client._embedding_openai]:
+        assert sdk.init_kwargs["timeout"].connect == 10
+        assert sdk.init_kwargs["timeout"].read == 120
 
 
 @pytest.mark.asyncio
@@ -110,6 +226,133 @@ async def test_prompt_cache_disabled(monkeypatch, fake_openai):
     monkeypatch.setattr(client._openai.chat.completions, "create", fake_create)
     await client.chat([{"role": "user", "content": "hi"}])
     assert "extra_body" not in captured
+
+
+@pytest.mark.asyncio
+async def test_brief_deepseek_tasks_preserve_output_budget(monkeypatch, fake_openai):
+    monkeypatch.setattr(client_mod.settings, "llm_brief_disable_thinking", None)
+    client = LLMClient()
+    client.base_url = "https://api.deepseek.com/v1"
+    client._prompt_cache = True
+    captured = {}
+
+    async def create(**kwargs):
+        captured.update(kwargs)
+        return _FakeResp('{"valid":true}')
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    await client.chat([{"role": "user", "content": "短任务"}], brief=True)
+    assert captured["extra_body"] == {"thinking": {"type": "disabled"}, "cache_prompt": True}
+    await client.chat_structured([], json_schema={"type": "object"})
+    assert captured["extra_body"]["thinking"] == {"type": "disabled"}
+
+
+@pytest.mark.asyncio
+async def test_brief_other_providers_receive_no_deepseek_options(monkeypatch, fake_openai):
+    monkeypatch.setattr(client_mod.settings, "llm_brief_disable_thinking", None)
+    client = LLMClient()
+    client.base_url = "https://example.org/v1"
+    client._prompt_cache = False
+    captured = {}
+
+    async def create(**kwargs):
+        captured.update(kwargs)
+        return _FakeResp()
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    await client.chat([], brief=True)
+    assert "extra_body" not in captured
+
+
+@pytest.mark.asyncio
+async def test_brief_thinking_control_is_explicit_for_compatible_relays(monkeypatch, fake_openai):
+    client = LLMClient()
+    client.base_url = "https://relay.example/v1"
+    client._prompt_cache = False
+    captured = {}
+
+    async def create(**kwargs):
+        captured.clear()
+        captured.update(kwargs)
+        return _FakeResp('{"ok":true}')
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    monkeypatch.setattr(client_mod.settings, "llm_brief_disable_thinking", True)
+    await client.chat([], brief=True)
+    assert captured["extra_body"]["thinking"] == {"type": "disabled"}
+    await client.chat([], brief=False)
+    assert "extra_body" not in captured
+    monkeypatch.setattr(client_mod.settings, "llm_brief_disable_thinking", False)
+    client.base_url = "https://api.deepseek.com"
+    await client.chat([], brief=True)
+    assert "extra_body" not in captured
+
+
+@pytest.mark.asyncio
+async def test_structured_billing_failure_does_not_retry_as_format_fallback(monkeypatch, fake_openai):
+    client = LLMClient()
+    calls = 0
+
+    class BillingError(Exception):
+        status_code = 402
+
+    async def fail(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise BillingError("balance unavailable")
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", fail)
+    with pytest.raises(BillingError):
+        await client.chat_structured([], json_schema={"type": "object"})
+    assert calls == 1
+
+
+@pytest.mark.parametrize("transport", ["sdk", "httpx"])
+async def test_dashscope_arrearage_does_not_trigger_paid_format_retry(monkeypatch, fake_openai, transport):
+    import httpx
+
+    client = LLMClient()
+    calls = 0
+    if transport == "sdk":
+        error = type("BillingError", (Exception,), {
+            "status_code": 400, "body": {"error": {"code": "Arrearage"}},
+        })("billing unavailable")
+    else:
+        response = httpx.Response(400, json={"code": "Arrearage"},
+                                  request=httpx.Request("POST", "https://example.org/reranks"))
+        error = httpx.HTTPStatusError("billing unavailable", request=response.request, response=response)
+
+    async def fail(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise error
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", fail)
+    with pytest.raises(type(error)):
+        await client.chat_structured([], json_schema={"type": "object"})
+    assert calls == 1
+    assert client_mod.provider_status_code(error) == 400
+    assert client_mod.provider_error_code(error) == "Arrearage"
+
+
+async def test_nonbilling_bad_request_can_still_fall_back_to_plain_json(monkeypatch, fake_openai):
+    import httpx
+
+    client = LLMClient()
+    calls = 0
+
+    async def create(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            response = httpx.Response(400, json={"code": "InvalidParameter"},
+                                      request=httpx.Request("POST", "https://example.org/chat/completions"))
+            raise httpx.HTTPStatusError("unsupported schema", request=response.request, response=response)
+        return _FakeResp('{"ok":true}')
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    assert await client.chat_structured([], json_schema={"type": "object"}) == {"ok": True}
+    assert calls == 2
 
 
 @pytest.mark.asyncio

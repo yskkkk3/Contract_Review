@@ -62,13 +62,14 @@ async def _search_regulations(args: dict, ctx: ToolContext) -> tuple[str, list[s
         return "（检索服务不可用）", []
     query = str(args.get("query", ""))
     risk_dim = args.get("risk_dim")
-    top_k = int(args.get("top_k", 3))
+    top_k = max(1, min(8, int(args.get("top_k", 3))))
     from app.rag.service import RAGService
 
     if not isinstance(rag, RAGService):
         return "（检索服务不可用）", []
     context, evidence = await rag.search_with_context(query, risk_dim=risk_dim, top_k=top_k)
-    doc_ids = list({e.chunk.doc_id for e in evidence})
+    ctx.setdefault("evidence_seen", []).extend(evidence)
+    doc_ids = list(dict.fromkeys(e.chunk.doc_id for e in evidence))
     return context, doc_ids
 
 
@@ -78,7 +79,9 @@ async def _get_clause(args: dict, ctx: ToolContext) -> tuple[str, list[str]]:
     clauses = ctx.get("clauses") or []
     if clauses and 0 <= index < len(clauses):
         return clauses[index][:2000], []
-    if content:
+    if clauses:
+        return f"（条款索引{index}无效；可用范围0至{len(clauses) - 1}，不能据此认定条款缺失。）", []
+    if content and index == 0:
         return content[:2000], []
     return "（未找到该条款）", []
 
@@ -88,7 +91,8 @@ async def _lookup_template(args: dict, ctx: ToolContext) -> tuple[str, list[str]
     if rag is None:
         return "（模板库不可用）", []
     query = f"{args.get('contract_type', '')} 合同模板"
-    context, evidence = await rag.search_with_context(query, risk_dim=None, top_k=2)
+    context, evidence = await rag.search_with_context(query, risk_dim=None, top_k=2, doc_type="template")
+    ctx.setdefault("evidence_seen", []).extend(evidence)
     doc_ids = list({e.chunk.doc_id for e in evidence})
     return context, doc_ids
 
@@ -101,7 +105,7 @@ _SEARCH_PARAMS: dict = {
             "type": "string",
             "description": "风险维度：主体资格与合规 / 财务与付款 / 知识产权与保密 / 违约责任与解除 / 验收交付与质保 / 争议解决与管辖",
         },
-        "top_k": {"type": "integer", "description": "返回证据条数，默认 3"},
+        "top_k": {"type": "integer", "minimum": 1, "maximum": 8, "description": "语义召回条数，默认3；关联关键条文另行补查，引用只来自实际展示正文"},
     },
     "required": ["query"],
     "additionalProperties": False,
