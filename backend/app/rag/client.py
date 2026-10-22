@@ -4,6 +4,7 @@ chat / embeddings 使用 OpenAI SDK；rerank 使用供应商兼容的 HTTP 接�
 默认组合为 DeepSeek 推理 + 阿里云百炼 Embedding/Rerank。
 """
 import asyncio
+from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -98,7 +99,33 @@ class LLMClient:
         self._http: httpx.AsyncClient | None = None
         # 应用层并发限流：所有 LLM 调用共享信号量，防止突发请求打满供应商推理队列
         self._sem = asyncio.Semaphore(settings.max_concurrent_llm)
+        background_slots = max(1, settings.max_concurrent_llm - settings.llm_chat_reserved_slots)
+        self._background_sem = asyncio.Semaphore(background_slots)
         self._prompt_cache = settings.llm_prompt_cache
+
+    @asynccontextmanager
+    async def _request_slot(self, *, interactive: bool = False):
+        # Acquire the background gate first so queued review work cannot take chat's slot.
+        if interactive:
+            async with self._sem:
+                yield
+        else:
+            async with self._background_sem, self._sem:
+                yield
+
+    @asynccontextmanager
+    async def _stream(self, messages: list[dict], model: str, *, interactive: bool = False,
+                      **kwargs: Any):
+        async with self._request_slot(interactive=interactive):
+            stream = await self._openai.chat.completions.create(
+                model=model, messages=messages, stream=True, **self._apply_cache(kwargs),
+            )
+            try:
+                yield stream
+            finally:
+                close = getattr(stream, "close", None)
+                if close is not None:
+                    await close()
 
     def _apply_cache(self, kwargs: dict) -> dict:
         """SiliconFlow prompt cache：命中后显著降低 prefill 耗时（TTFT 优化）。
@@ -161,7 +188,7 @@ class LLMClient:
         **kwargs: Any,
     ) -> str:
         model = self._checked_model(model or settings.llm_review_model)
-        async with self._sem:
+        async with self._request_slot():
             resp = await self._openai.chat.completions.create(
                 model=model,
                 messages=messages,
@@ -186,7 +213,7 @@ class LLMClient:
         调用方负责工具循环（见 app/agent/tools/executor.py）。
         """
         model = self._checked_model(model or settings.llm_review_model)
-        async with self._sem:
+        async with self._request_slot():
             resp = await self._openai.chat.completions.create(
                 model=model,
                 messages=messages,
@@ -217,7 +244,7 @@ class LLMClient:
         """
         model = self._checked_model(model or settings.llm_intent_model)
         try:
-            async with self._sem:
+            async with self._request_slot():
                 resp = await self._openai.chat.completions.create(
                     model=model,
                     messages=messages,
@@ -262,22 +289,16 @@ class LLMClient:
         full: list[str] = []
         usage: dict = {}
         kwargs.setdefault("stream_options", {"include_usage": True})
-        async with self._sem:
-            stream = await self._openai.chat.completions.create(
-                model=model,
-                messages=messages,
-                stream=True,
-                **self._apply_cache(kwargs),
-            )
-        async for chunk in stream:
-            if chunk.usage:
-                usage = {
-                    "prompt_tokens": chunk.usage.prompt_tokens,
-                    "completion_tokens": chunk.usage.completion_tokens,
-                    "total_tokens": chunk.usage.total_tokens,
-                }
-            if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-                full.append(_final_content(chunk.choices[0].delta))
+        async with self._stream(messages, model, **kwargs) as stream:
+            async for chunk in stream:
+                if chunk.usage:
+                    usage = {
+                        "prompt_tokens": chunk.usage.prompt_tokens,
+                        "completion_tokens": chunk.usage.completion_tokens,
+                        "total_tokens": chunk.usage.total_tokens,
+                    }
+                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                    full.append(_final_content(chunk.choices[0].delta))
         return "".join(full), usage
 
     async def chat_stream(self, messages: list[dict], model: str | None = None, **kwargs: Any):
@@ -287,18 +308,12 @@ class LLMClient:
         （无 content），由调用方统计；生成器本身只产出增量文本。
         """
         model = self._checked_model(model or settings.llm_chat_model)
-        async with self._sem:
-            stream = await self._openai.chat.completions.create(
-                model=model,
-                messages=messages,
-                stream=True,
-                **self._apply_cache(kwargs),
-            )
-        async for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-                text = _final_content(chunk.choices[0].delta)
-                if text:
-                    yield text
+        async with self._stream(messages, model, **kwargs) as stream:
+            async for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                    text = _final_content(chunk.choices[0].delta)
+                    if text:
+                        yield text
 
     async def chat_stream_events(self, messages: list[dict], model: str | None = None, **kwargs: Any):
         """流式事件生成器：yield ("start", None) → ("delta", text)… → ("usage", dict)。
@@ -307,34 +322,28 @@ class LLMClient:
         """
         model = self._checked_model(model or settings.llm_chat_model)
         kwargs.setdefault("stream_options", {"include_usage": True})
-        async with self._sem:
-            stream = await self._openai.chat.completions.create(
-                model=model,
-                messages=messages,
-                stream=True,
-                **self._apply_cache(kwargs),
-            )
-        yield ("start", None)
-        async for chunk in stream:
-            # 独立判断：部分供应商 usage 与 content 可能同 chunk，用 if 而非 elif 避免吞 delta
-            if chunk.usage:
-                yield (
-                    "usage",
-                    {
-                        "prompt_tokens": chunk.usage.prompt_tokens,
-                        "completion_tokens": chunk.usage.completion_tokens,
-                        "total_tokens": chunk.usage.total_tokens,
-                    },
-                )
-            if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-                text = _final_content(chunk.choices[0].delta)
-                if text:
-                    yield ("delta", text)
+        async with self._stream(messages, model, interactive=True, **kwargs) as stream:
+            yield ("start", None)
+            async for chunk in stream:
+                # Independent checks: usage and content can share one chunk.
+                if chunk.usage:
+                    yield (
+                        "usage",
+                        {
+                            "prompt_tokens": chunk.usage.prompt_tokens,
+                            "completion_tokens": chunk.usage.completion_tokens,
+                            "total_tokens": chunk.usage.total_tokens,
+                        },
+                    )
+                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                    text = _final_content(chunk.choices[0].delta)
+                    if text:
+                        yield ("delta", text)
 
     # ---------- embedding（OpenAI SDK） ----------
     async def embed(self, texts: list[str], model: str | None = None) -> list[list[float]]:
         model = model or settings.embedding_model
-        async with self._sem:
+        async with self._request_slot():
             resp = await self._embedding_openai.embeddings.create(
                 model=model,
                 input=texts,
@@ -353,7 +362,7 @@ class LLMClient:
         top_n: int = 5,
     ) -> list[dict]:
         model = model or settings.rerank_model
-        async with self._sem:
+        async with self._request_slot():
             resp = await self.http.post(
                 self.rerank_url,
                 json={"model": model, "query": query, "documents": documents, "top_n": top_n},

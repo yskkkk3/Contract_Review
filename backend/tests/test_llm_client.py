@@ -213,6 +213,130 @@ async def test_prompt_cache_extra_body(monkeypatch, fake_openai):
     assert captured["extra_body"]["cache_prompt"] is True
 
 
+@pytest.mark.parametrize("method", ["collect_stream", "chat_stream", "chat_stream_events"])
+async def test_stream_holds_capacity_until_consumed_and_closes(monkeypatch, fake_openai, method):
+    from types import SimpleNamespace
+
+    client = LLMClient()
+    client._sem = asyncio.Semaphore(1)
+    opened, release = asyncio.Event(), asyncio.Event()
+    streams = []
+
+    class Stream:
+        sent = False
+        closed = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self.sent:
+                raise StopAsyncIteration
+            await release.wait()
+            self.sent = True
+            return SimpleNamespace(usage=None, choices=[SimpleNamespace(
+                delta=SimpleNamespace(content="answer"),
+            )])
+
+        async def close(self):
+            self.closed = True
+
+    async def create(**kwargs):
+        stream = Stream()
+        streams.append(stream)
+        opened.set()
+        return stream
+
+    async def consume():
+        result = getattr(client, method)([])
+        if method == "collect_stream":
+            return await result
+        return [event async for event in result]
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    first = asyncio.create_task(consume())
+    await asyncio.wait_for(opened.wait(), 1)
+    second = asyncio.create_task(consume())
+    await asyncio.sleep(0)
+    assert len(streams) == 1
+    release.set()
+    await asyncio.wait_for(asyncio.gather(first, second), 1)
+    assert len(streams) == 2
+    assert all(stream.closed for stream in streams)
+
+
+async def test_cancelled_stream_releases_capacity_and_closes(monkeypatch, fake_openai):
+    client = LLMClient()
+    client._sem = asyncio.Semaphore(1)
+    closed = []
+    entered = asyncio.Event()
+
+    class Stream:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            entered.set()
+            await asyncio.Event().wait()
+
+        async def close(self):
+            closed.append(True)
+
+    async def create(**kwargs):
+        return Stream()
+
+    async def consume():
+        return [event async for event in client.chat_stream_events([])]
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(entered.wait(), 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert closed == [True]
+    await asyncio.wait_for(client._sem.acquire(), 1)
+    client._sem.release()
+
+
+async def test_background_work_leaves_chat_capacity(monkeypatch, fake_openai):
+    monkeypatch.setattr(client_mod.settings, "max_concurrent_llm", 2)
+    monkeypatch.setattr(client_mod.settings, "llm_chat_reserved_slots", 1)
+    client = LLMClient()
+    background_started = asyncio.Event()
+    release = asyncio.Event()
+    calls = []
+
+    async def create(**kwargs):
+        calls.append(kwargs)
+        if not kwargs.get("stream"):
+            background_started.set()
+            await release.wait()
+            return _FakeResp("done")
+
+        async def empty():
+            if False:
+                yield
+
+        return empty()
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    first = asyncio.create_task(client.chat([]))
+    await asyncio.wait_for(background_started.wait(), 1)
+    second = asyncio.create_task(client.chat([]))
+    await asyncio.sleep(0)
+    assert len(calls) == 1
+
+    async def chat():
+        return [event async for event in client.chat_stream_events([])]
+
+    await asyncio.wait_for(chat(), 1)
+    assert len(calls) == 2
+    release.set()
+    await asyncio.wait_for(asyncio.gather(first, second), 1)
+    assert len(calls) == 3
+
+
 @pytest.mark.asyncio
 async def test_prompt_cache_disabled(monkeypatch, fake_openai):
     client = LLMClient()

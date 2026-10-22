@@ -2,6 +2,7 @@
 from functools import lru_cache
 from urllib.parse import quote
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -142,7 +143,8 @@ class Settings(BaseSettings):
     llm_brief_disable_thinking: bool | None = None  # None仅官网自动处理；兼容中转可显式开启
     llm_brief_reasoning_effort: str | None = None  # 仅在当前供应商验证后显式配置
     llm_http_trust_env: bool = True  # 含系统代理；本地代理故障时可显式关闭
-    max_concurrent_llm: int = 4         # LLM 并发上限（应用层信号量，防突发打满供应商）
+    max_concurrent_llm: int = Field(default=4, ge=1)
+    llm_chat_reserved_slots: int = Field(default=1, ge=0)  # 总容量>1时保留聊天容量
     chat_stream_timeout: float = 30.0   # 聊天流式超时（秒）
     review_stream_timeout: float = 120.0  # 审阅流式超时（秒）
 
