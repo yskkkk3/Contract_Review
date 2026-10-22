@@ -3,6 +3,7 @@
 简历点：首 Token 工程——流式事件通道（start/delta/usage）计时 TTFT，
 done 事件携带 ttft_ms / tokens / TPOT，指标进 /api/metrics 滑动窗口。
 """
+import asyncio
 import json
 import time
 
@@ -12,11 +13,11 @@ from sqlalchemy.orm import Session as DBSession
 from app.agent.prompts import load_prompt
 from app.core.config import get_settings
 from app.core.metrics import record
-from app.core.storage import get_storage
 from app.models.session_message import Message, Session
 from app.models.user import User
 from app.rag.client import get_sf_client
 from app.schemas.chat import ChatRequest
+from app.services.contract_context import contract_text_cache
 
 settings = get_settings()
 
@@ -43,7 +44,7 @@ def _load_contract_text(db: DBSession, session: Session) -> str:
     if contract is None or not contract.content_path:
         return ""
     try:
-        return get_storage().read_text(contract.content_path)[:8000]
+        return contract_text_cache.read(contract.user_id, contract.id, contract.content_path)
     except (OSError, RuntimeError):
         return ""
 
@@ -52,7 +53,7 @@ async def stream_chat(
     request: ChatRequest, session: Session, current_user: User, db: DBSession
 ) -> StreamingResponse:
     client = get_sf_client()
-    contract_text = _load_contract_text(db, session)
+    contract_text = await asyncio.to_thread(_load_contract_text, db, session)
     history = await _history_messages(db, session.id)
 
     # 保存用户消息

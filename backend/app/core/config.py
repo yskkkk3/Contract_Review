@@ -124,6 +124,8 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = False
     rate_limit_per_minute: int = 120
     chat_cache_ttl: int = 1800
+    chat_contract_cache_ttl: float = 300.0
+    chat_contract_cache_entries: int = 64
 
     # Agent 工具调用（Tool Calling）
     agent_tool_calling_enabled: bool = True
