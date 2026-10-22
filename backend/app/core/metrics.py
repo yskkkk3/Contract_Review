@@ -21,6 +21,8 @@ class Sample:
     ttft_ms: float | None
     total_ms: float
     tokens: int | None
+    phases_ms: dict[str, float] = field(default_factory=dict)
+    status: str = "success"
     ts: float = field(default_factory=time.monotonic)
 
 
@@ -39,11 +41,13 @@ def record(
     ttft_ms: float | None = None,
     total_ms: float,
     tokens: int | None = None,
+    phases_ms: dict[str, float] | None = None,
+    status: str = "success",
 ) -> None:
     """记录一次请求样本（endpoint 分桶：chat / review / rag 等）。"""
     if not settings.metrics_enabled:
         return
-    _bucket(endpoint).append(Sample(endpoint, ttft_ms, total_ms, tokens))
+    _bucket(endpoint).append(Sample(endpoint, ttft_ms, total_ms, tokens, dict(phases_ms or {}), status))
 
 
 def _percentile(sorted_vals: list[float], p: float) -> float:
@@ -67,6 +71,16 @@ def snapshot() -> dict:
         avg_total = sum(totals) / len(totals)
         out[ep] = {
             "count": len(bucket),
+            "statuses": {status: sum(s.status == status for s in bucket)
+                         for status in sorted({s.status for s in bucket})},
+            "phases_ms": {
+                phase: {
+                    f"p{int(p * 100)}": _percentile(
+                        sorted(s.phases_ms[phase] for s in bucket if phase in s.phases_ms), p,
+                    ) for p in (0.5, 0.95, 0.99)
+                }
+                for phase in sorted({phase for s in bucket for phase in s.phases_ms})
+            },
             "ttft_p50": _percentile(ttfts, 0.5),
             "ttft_p95": _percentile(ttfts, 0.95),
             "ttft_p99": _percentile(ttfts, 0.99),

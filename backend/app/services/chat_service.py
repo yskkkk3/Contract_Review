@@ -50,17 +50,35 @@ def _load_contract_text(db: DBSession, session: Session) -> str:
 
 
 async def stream_chat(
-    request: ChatRequest, session: Session, current_user: User, db: DBSession
+    request: ChatRequest, session: Session, current_user: User, db: DBSession,
+    *, started_at: float | None = None,
 ) -> StreamingResponse:
-    client = get_sf_client()
-    contract_text = await asyncio.to_thread(_load_contract_text, db, session)
-    history = await _history_messages(db, session.id)
+    started_at = started_at if started_at is not None else time.monotonic()
+    phases: dict[str, float] = {}
 
-    # 保存用户消息
-    db.add(
-        Message(session_id=session.id, role="user", content=request.content or "", parent_id=request.parent_id)
-    )
-    db.commit()
+    def elapsed(start: float) -> float:
+        return (time.monotonic() - start) * 1000
+
+    try:
+        client = get_sf_client()
+        phase_start = time.monotonic()
+        contract_text = await asyncio.to_thread(_load_contract_text, db, session)
+        phases["contract_load_ms"] = elapsed(phase_start)
+        phase_start = time.monotonic()
+        history = await _history_messages(db, session.id)
+        phases["history_load_ms"] = elapsed(phase_start)
+        phase_start = time.monotonic()
+        db.add(Message(
+            session_id=session.id, role="user", content=request.content or "",
+            parent_id=request.parent_id,
+        ))
+        db.commit()
+        phases["user_persist_ms"] = elapsed(phase_start)
+        phases["preparation_ms"] = elapsed(started_at)
+    except BaseException as exc:
+        record("chat", total_ms=elapsed(started_at), phases_ms=phases,
+               status="cancelled" if isinstance(exc, asyncio.CancelledError) else "error")
+        raise
 
     system = SYSTEM_TEMPLATE
     if contract_text:
@@ -70,32 +88,52 @@ async def stream_chat(
     usage: dict = {}
 
     async def gen():
-        t0 = time.monotonic()
+        model_started = time.monotonic()
         ttft_ms: float | None = None
-        async for kind, payload in client.chat_stream_events(
-            [{"role": "system", "content": system}, *history, {"role": "user", "content": request.content or ""}],
-            model=settings.llm_chat_model,
-        ):
-            if kind == "delta":
-                if ttft_ms is None:
-                    ttft_ms = (time.monotonic() - t0) * 1000  # 首个 token 到达时刻
-                full_content.append(payload)
-                yield f"data: {json.dumps({'type': 'content', 'content': payload, 'session_id': session.id}, ensure_ascii=False)}\n\n"
-            elif kind == "usage":
-                usage.update(payload)
-        total_ms = (time.monotonic() - t0) * 1000
-        text = "".join(full_content)
-        message = Message(session_id=session.id, role="assistant", content=text)
-        db.add(message)
-        db.commit()
-        db.refresh(message)
-        completion_tokens = usage.get("completion_tokens")
-        record(
-            "chat",
-            ttft_ms=ttft_ms,
-            total_ms=total_ms,
-            tokens=completion_tokens,
-        )
-        yield f"data: {json.dumps({'type': 'done', 'message_id': message.id, 'full_content': text, 'metrics': {'ttft_ms': round(ttft_ms or 0, 1), 'total_ms': round(total_ms, 1), 'completion_tokens': completion_tokens, 'tokens_per_sec': round((completion_tokens or 0) / (total_ms / 1000), 1) if total_ms > 0 else 0}}, ensure_ascii=False)}\n\n"
+        status = "success"
+        try:
+            async for kind, payload in client.chat_stream_events(
+                [{"role": "system", "content": system}, *history,
+                 {"role": "user", "content": request.content or ""}],
+                model=settings.llm_chat_model,
+            ):
+                if kind == "delta":
+                    if ttft_ms is None:
+                        ttft_ms = elapsed(started_at)
+                        phases["model_first_content_ms"] = elapsed(model_started)
+                    full_content.append(payload)
+                    yield f"data: {json.dumps({'type': 'content', 'content': payload, 'session_id': session.id}, ensure_ascii=False)}\n\n"
+                elif kind == "usage":
+                    usage.update(payload)
+            phases["model_total_ms"] = elapsed(model_started)
+            if ttft_ms is not None:
+                phases["generation_ms"] = phases["model_total_ms"] - phases["model_first_content_ms"]
+            text = "".join(full_content)
+            phase_start = time.monotonic()
+            message = Message(session_id=session.id, role="assistant", content=text)
+            db.add(message)
+            db.commit()
+            db.refresh(message)
+            phases["assistant_persist_ms"] = elapsed(phase_start)
+            total_ms = elapsed(started_at)
+            completion_tokens = usage.get("completion_tokens")
+            metrics = {
+                "ttft_ms": round(ttft_ms, 1) if ttft_ms is not None else None,
+                "total_ms": round(total_ms, 1),
+                "completion_tokens": completion_tokens,
+                "tokens_per_sec": round((completion_tokens or 0) / (total_ms / 1000), 1)
+                if total_ms > 0 else 0,
+                "phases_ms": {key: round(value, 1) for key, value in phases.items()},
+            }
+            yield f"data: {json.dumps({'type': 'done', 'message_id': message.id, 'full_content': text, 'metrics': metrics}, ensure_ascii=False)}\n\n"
+        except asyncio.CancelledError:
+            status = "cancelled"
+            raise
+        except Exception:
+            status = "error"
+            raise
+        finally:
+            record("chat", ttft_ms=ttft_ms, total_ms=elapsed(started_at),
+                   tokens=usage.get("completion_tokens"), phases_ms=phases, status=status)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
