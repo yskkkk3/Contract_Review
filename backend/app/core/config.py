@@ -127,6 +127,8 @@ class Settings(BaseSettings):
     chat_cache_ttl: int = 1800
     chat_contract_cache_ttl: float = 300.0
     chat_contract_cache_entries: int = 64
+    chat_history_max_chars: int = 24000  # 软预算；0禁用，含糊追问和全局复查仍用完整历史
+    chat_history_recent_messages: int = Field(default=12, ge=2)
 
     # Agent 工具调用（Tool Calling）
     agent_tool_calling_enabled: bool = True

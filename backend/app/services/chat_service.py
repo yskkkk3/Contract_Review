@@ -17,6 +17,7 @@ from app.models.session_message import Message, Session
 from app.models.user import User
 from app.rag.client import get_sf_client
 from app.schemas.chat import ChatRequest
+from app.services.chat_history import select_history
 from app.services.contract_context import contract_text_cache
 
 settings = get_settings()
@@ -26,13 +27,13 @@ SYSTEM_TEMPLATE = load_prompt("chat")
 
 async def _history_messages(db: DBSession, session_id: int) -> list[dict]:
     """返回当前会话的完整消息历史，供模型保持会话内记忆。"""
-    rows = (
-        db.query(Message)
-        .filter(Message.session_id == session_id)
-        .order_by(Message.id.asc())
-        .all()
-    )
-    return [{"role": m.role, "content": m.content} for m in rows]
+    def load():
+        rows = (db.query(Message.role, Message.content)
+                .filter(Message.session_id == session_id)
+                .order_by(Message.id.asc()).all())
+        return [{"role": m.role, "content": m.content} for m in rows]
+
+    return await asyncio.to_thread(load)
 
 
 def _load_contract_text(db: DBSession, session: Session) -> str:
@@ -67,6 +68,11 @@ async def stream_chat(
         phase_start = time.monotonic()
         history = await _history_messages(db, session.id)
         phases["history_load_ms"] = elapsed(phase_start)
+        phase_start = time.monotonic()
+        history_chars = sum(len(m["content"]) for m in history)
+        history = select_history(history, request.content or "")
+        context_chars = sum(len(m["content"]) for m in history)
+        phases["history_select_ms"] = elapsed(phase_start)
         phase_start = time.monotonic()
         db.add(Message(
             session_id=session.id, role="user", content=request.content or "",
@@ -124,6 +130,8 @@ async def stream_chat(
                 "tokens_per_sec": round((completion_tokens or 0) / (total_ms / 1000), 1)
                 if total_ms > 0 else 0,
                 "phases_ms": {key: round(value, 1) for key, value in phases.items()},
+                "history_chars": history_chars,
+                "history_context_chars": context_chars,
             }
             yield f"data: {json.dumps({'type': 'done', 'message_id': message.id, 'full_content': text, 'metrics': metrics}, ensure_ascii=False)}\n\n"
         except asyncio.CancelledError:
