@@ -5,7 +5,9 @@ done 事件携带 ttft_ms / tokens / TPOT，指标进 /api/metrics 滑动窗口�
 """
 import asyncio
 import json
+import logging
 import time
+from contextlib import suppress
 
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session as DBSession
@@ -23,6 +25,52 @@ from app.services.contract_context import contract_text_cache
 settings = get_settings()
 
 SYSTEM_TEMPLATE = load_prompt("chat")
+logger = logging.getLogger(__name__)
+
+
+class ChatStreamTimeout(TimeoutError):
+    pass
+
+
+async def _stream_events(client, messages: list[dict]):
+    """Keep the browser alive while enforcing upstream idle and first-answer deadlines."""
+    source = client.chat_stream_events(messages, model=settings.llm_chat_model)
+    loop = asyncio.get_running_loop()
+    first_deadline = loop.time() + settings.chat_first_content_timeout
+    idle_deadline = loop.time() + settings.chat_stream_timeout
+    first_content = False
+    pending = None
+    try:
+        while True:
+            if pending is None:
+                pending = asyncio.create_task(anext(source))
+                idle_deadline = loop.time() + settings.chat_stream_timeout
+            now = loop.time()
+            deadline = idle_deadline if first_content else min(idle_deadline, first_deadline)
+            if now >= deadline:
+                message = ("等待回答超时，请稍后重试" if not first_content
+                           else "回答传输超时，当前内容尚未完成，请重试")
+                raise ChatStreamTimeout(message)
+            done, _ = await asyncio.wait(
+                {pending}, timeout=min(settings.chat_heartbeat_interval, deadline - now),
+            )
+            if not done:
+                yield "heartbeat", None
+                continue
+            try:
+                kind, payload = pending.result()
+            except StopAsyncIteration:
+                return
+            pending = None
+            if kind == "delta" and payload:
+                first_content = True
+            yield kind, payload
+    finally:
+        if pending is not None:
+            pending.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await pending
+        await source.aclose()
 
 
 async def _history_messages(db: DBSession, session_id: int) -> list[dict]:
@@ -55,6 +103,8 @@ async def stream_chat(
     *, started_at: float | None = None,
 ) -> StreamingResponse:
     started_at = started_at if started_at is not None else time.monotonic()
+    # ORM objects expire on commit; do not reopen a DB transaction while streaming.
+    session_id = session.id
     phases: dict[str, float] = {}
 
     def elapsed(start: float) -> float:
@@ -66,7 +116,7 @@ async def stream_chat(
         contract_text = await asyncio.to_thread(_load_contract_text, db, session)
         phases["contract_load_ms"] = elapsed(phase_start)
         phase_start = time.monotonic()
-        history = await _history_messages(db, session.id)
+        history = await _history_messages(db, session_id)
         phases["history_load_ms"] = elapsed(phase_start)
         phase_start = time.monotonic()
         history_chars = sum(len(m["content"]) for m in history)
@@ -75,7 +125,7 @@ async def stream_chat(
         phases["history_select_ms"] = elapsed(phase_start)
         phase_start = time.monotonic()
         db.add(Message(
-            session_id=session.id, role="user", content=request.content or "",
+            session_id=session_id, role="user", content=request.content or "",
             parent_id=request.parent_id,
         ))
         db.commit()
@@ -97,26 +147,34 @@ async def stream_chat(
         model_started = time.monotonic()
         ttft_ms: float | None = None
         status = "success"
+        model_events = _stream_events(client, [
+            {"role": "system", "content": system}, *history,
+            {"role": "user", "content": request.content or ""},
+        ])
         try:
-            async for kind, payload in client.chat_stream_events(
-                [{"role": "system", "content": system}, *history,
-                 {"role": "user", "content": request.content or ""}],
-                model=settings.llm_chat_model,
-            ):
+            yield f"data: {json.dumps({'type': 'start', 'session_id': session_id})}\n\n"
+            async for kind, payload in model_events:
                 if kind == "delta":
                     if ttft_ms is None:
                         ttft_ms = elapsed(started_at)
                         phases["model_first_content_ms"] = elapsed(model_started)
                     full_content.append(payload)
-                    yield f"data: {json.dumps({'type': 'content', 'content': payload, 'session_id': session.id}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'content', 'content': payload, 'session_id': session_id}, ensure_ascii=False)}\n\n"
                 elif kind == "usage":
                     usage.update(payload)
+                    yield f"data: {json.dumps({'type': 'usage', 'usage': payload})}\n\n"
+                elif kind == "start":
+                    yield 'data: {"type": "status", "phase": "analyzing"}\n\n'
+                elif kind == "heartbeat":
+                    yield ": heartbeat\n\n"
             phases["model_total_ms"] = elapsed(model_started)
             if ttft_ms is not None:
                 phases["generation_ms"] = phases["model_total_ms"] - phases["model_first_content_ms"]
             text = "".join(full_content)
+            if not text.strip():
+                raise ValueError("upstream returned no answer content")
             phase_start = time.monotonic()
-            message = Message(session_id=session.id, role="assistant", content=text)
+            message = Message(session_id=session_id, role="assistant", content=text)
             db.add(message)
             db.commit()
             db.refresh(message)
@@ -137,11 +195,26 @@ async def stream_chat(
         except asyncio.CancelledError:
             status = "cancelled"
             raise
-        except Exception:
-            status = "error"
+        except GeneratorExit:
+            status = "cancelled"
             raise
+        except ChatStreamTimeout as exc:
+            status = "timeout"
+            yield f"data: {json.dumps({'type': 'error', 'code': 'timeout', 'message': str(exc), 'partial': bool(full_content)}, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            status = "error"
+            db.rollback()
+            logger.warning("Chat stream failed session_id=%s error_type=%s", session_id, type(exc).__name__)
+            message = "回答生成失败，当前内容尚未完成，请重试" if full_content else "回答生成失败，请稍后重试"
+            yield f"data: {json.dumps({'type': 'error', 'code': 'chat_error', 'message': message, 'partial': bool(full_content)}, ensure_ascii=False)}\n\n"
         finally:
-            record("chat", ttft_ms=ttft_ms, total_ms=elapsed(started_at),
-                   tokens=usage.get("completion_tokens"), phases_ms=phases, status=status)
+            try:
+                await model_events.aclose()
+            finally:
+                phases.setdefault("model_total_ms", elapsed(model_started))
+                record("chat", ttft_ms=ttft_ms, total_ms=elapsed(started_at),
+                       tokens=usage.get("completion_tokens"), phases_ms=phases, status=status)
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return StreamingResponse(gen(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+    })

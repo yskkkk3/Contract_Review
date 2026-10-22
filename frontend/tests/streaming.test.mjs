@@ -66,6 +66,7 @@ async function chatSetup(sessionApi) {
   const setup = parse(file).descriptor.scriptSetup.content
   const hooks = {}
   const streams = []
+  const aborts = []
   const context = createContext({ localStorage: { getItem: () => '' } })
   const imports = {
     vue: {
@@ -77,17 +78,65 @@ async function chatSetup(sessionApi) {
     '@/api/contract': { api: {} },
     '@/api/session': { sessionApi },
     '@/api/http': { TOKEN_KEY: 'token' },
-    '@/utils/sse': { openSse: (options) => { streams.push(options); return () => {} } },
+    '@/utils/sse': { openSse: (options) => { streams.push(options); return () => aborts.push(options) } },
   }
-  const module = new SourceTextModule(transpile(`${setup}\nexport { send, switchSession, newSession, input, messages, sending, currentId, loadingHistory }`), {
+  const module = new SourceTextModule(transpile(`${setup}\nexport { send, stopReply, replyStatus, switchSession, newSession, input, messages, sending, currentId, loadingHistory }`), {
     context, initializeImportMeta: (meta) => { meta.env = {} },
   })
   await module.link((name) => new SyntheticModule(Object.keys(imports[name]), function () {
     for (const [key, value] of Object.entries(imports[name])) this.setExport(key, value)
   }, { context }))
   await module.evaluate()
-  return { ...module.namespace, hooks, streams }
+  return { ...module.namespace, hooks, streams, aborts }
 }
+
+test('chat shows waiting/generating state and clears status on completion', async () => {
+  const chat = await chatSetup({})
+  chat.currentId.value = 1
+  chat.input.value = '付款风险'
+  await chat.send()
+  assert.match(chat.replyStatus.value, /准备/)
+  const stream = chat.streams[0]
+  stream.onEvent({ type: 'start' })
+  assert.match(chat.replyStatus.value, /等待/)
+  stream.onEvent({ type: 'status', phase: 'analyzing' })
+  assert.match(chat.replyStatus.value, /分析/)
+  stream.onEvent({ type: 'content', content: 'partial' })
+  assert.match(chat.replyStatus.value, /生成/)
+  stream.onEvent({ type: 'done' })
+  assert.equal(chat.sending.value, false)
+  assert.equal(chat.replyStatus.value, '')
+})
+
+test('stopping keeps partial text and ignores stale callbacks after another send', async () => {
+  const chat = await chatSetup({})
+  chat.currentId.value = 1
+  chat.input.value = '第一问'
+  await chat.send()
+  const old = chat.streams[0]
+  old.onEvent({ type: 'content', content: 'partial' })
+  chat.stopReply()
+  assert.equal(chat.aborts.length, 1)
+  assert.equal(chat.sending.value, false)
+  assert.equal(chat.messages.value.at(-1).content, 'partial')
+  assert.match(chat.replyStatus.value, /尚未完成/)
+  chat.input.value = '第二问'
+  await chat.send()
+  old.onEvent({ type: 'done' })
+  old.onEvent({ type: 'content', content: 'stale' })
+  assert.equal(chat.sending.value, true)
+  assert.equal(chat.messages.value.at(-1).role, 'user')
+})
+
+test('chat timeout reports incomplete answer and releases the send button', async () => {
+  const chat = await chatSetup({})
+  chat.currentId.value = 1
+  chat.input.value = '付款风险'
+  await chat.send()
+  chat.streams[0].onEvent({ type: 'error', code: 'timeout', message: '回答超时，尚未完成' })
+  assert.equal(chat.sending.value, false)
+  assert.match(chat.replyStatus.value, /超时/)
+})
 
 test('rapid switching cannot overwrite the current history', async () => {
   const first = deferred()

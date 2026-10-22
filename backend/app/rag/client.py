@@ -325,8 +325,10 @@ class LLMClient:
         async with self._stream(messages, model, interactive=True, **kwargs) as stream:
             yield ("start", None)
             async for chunk in stream:
+                emitted = False
                 # Independent checks: usage and content can share one chunk.
                 if chunk.usage:
+                    emitted = True
                     yield (
                         "usage",
                         {
@@ -338,7 +340,11 @@ class LLMClient:
                 if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
                     text = _final_content(chunk.choices[0].delta)
                     if text:
+                        emitted = True
                         yield ("delta", text)
+                if not emitted:
+                    # Signal liveness without exposing private reasoning to the browser.
+                    yield ("activity", None)
 
     # ---------- embedding（OpenAI SDK） ----------
     async def embed(self, texts: list[str], model: str | None = None) -> list[list[float]]:

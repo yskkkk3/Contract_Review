@@ -337,6 +337,38 @@ async def test_background_work_leaves_chat_capacity(monkeypatch, fake_openai):
     assert len(calls) == 3
 
 
+async def test_reasoning_liveness_is_private_and_chat_reasoning_settings_unchanged(monkeypatch, fake_openai):
+    from types import SimpleNamespace
+
+    client = LLMClient()
+    monkeypatch.setattr(client_mod.settings, "llm_brief_disable_thinking", True)
+    monkeypatch.setattr(client_mod.settings, "llm_brief_reasoning_effort", "low")
+    captured = {}
+
+    async def chunks():
+        yield SimpleNamespace(usage=None, choices=[SimpleNamespace(delta=SimpleNamespace(
+            content=None, reasoning_content="private reasoning",
+        ))])
+        yield SimpleNamespace(usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5,
+                                                  total_tokens=15), choices=[SimpleNamespace(
+            delta=SimpleNamespace(content="answer"),
+        )])
+
+    async def create(**kwargs):
+        captured.update(kwargs)
+        return chunks()
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    events = [event async for event in client.chat_stream_events([])]
+    assert events == [("start", None), ("activity", None),
+                      ("usage", {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}),
+                      ("delta", "answer")]
+    assert "private reasoning" not in str(events)
+    assert "thinking" not in captured.get("extra_body", {})
+    assert "reasoning_effort" not in captured
+    assert "max_tokens" not in captured
+
+
 @pytest.mark.asyncio
 async def test_prompt_cache_disabled(monkeypatch, fake_openai):
     client = LLMClient()

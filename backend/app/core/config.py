@@ -147,7 +147,9 @@ class Settings(BaseSettings):
     llm_http_trust_env: bool = True  # 含系统代理；本地代理故障时可显式关闭
     max_concurrent_llm: int = Field(default=4, ge=1)
     llm_chat_reserved_slots: int = Field(default=1, ge=0)  # 总容量>1时保留聊天容量
-    chat_stream_timeout: float = 30.0   # 聊天流式超时（秒）
+    chat_stream_timeout: float = Field(default=30.0, gt=0)  # 上游无活动超时（含思考活动）
+    chat_first_content_timeout: float = Field(default=120.0, gt=0)
+    chat_heartbeat_interval: float = Field(default=10.0, gt=0)
     review_stream_timeout: float = 120.0  # 审阅流式超时（秒）
 
     # MCP
