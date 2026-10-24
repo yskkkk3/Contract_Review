@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session as DBSession
 from app.core.db import get_db
 from app.core.security import get_current_user
 from app.core.storage import get_storage
-from app.models.contract import ContractFile
+from app.models.contract import ContractFile, ContractType
 from app.models.user import User
 from app.schemas.base import GenericResponse
 from app.schemas.contract import (
@@ -16,6 +16,7 @@ from app.schemas.contract import (
     SetContractTypeRequest,
     UploadResponse,
 )
+from app.services.contract_type_service import resolve_contract_type
 from app.services.document_parse import extract_contract_info, parse_document
 
 router = APIRouter(prefix="/contracts", tags=["contracts"])
@@ -54,6 +55,7 @@ async def upload_contract(
         raise
 
     info = await extract_contract_info(content)
+    contract_type = resolve_contract_type(db, file.filename, content)
 
     record = ContractFile(
         user_id=current_user.id,
@@ -65,6 +67,7 @@ async def upload_contract(
         party_a=info["party_a"],
         party_b=info["party_b"],
         amount=float(info["amount"]) if info.get("amount") else None,
+        contract_type_id=contract_type.id if contract_type else None,
     )
     db.add(record)
     db.commit()
@@ -74,6 +77,7 @@ async def upload_contract(
             file_id=record.id, title=record.title, file_type=record.file_type,
             file_url=f"/api/contracts/{record.id}/download",
             party_a=record.party_a, party_b=record.party_b, amount=record.amount,
+            contract_type_id=record.contract_type_id,
         )
     )
 
@@ -87,6 +91,7 @@ async def upload_raw(
     """仅保存不解析（比对用）。"""
     save_path = _save_upload(file, current_user.id)
     file_type = file.filename.rsplit(".", 1)[-1].lower()
+    contract_type = resolve_contract_type(db, file.filename)
     record = ContractFile(
         user_id=current_user.id,
         title=file.filename,
@@ -94,6 +99,7 @@ async def upload_raw(
         file_path=save_path,
         content_path="",
         parse_status="uploaded",
+        contract_type_id=contract_type.id if contract_type else None,
     )
     db.add(record)
     db.commit()
@@ -102,6 +108,7 @@ async def upload_raw(
         data=UploadResponse(
             file_id=record.id, title=record.title, file_type=record.file_type,
             file_url=f"/api/contracts/{record.id}/download", parse_status="uploaded",
+            contract_type_id=record.contract_type_id,
         )
     )
 
@@ -143,6 +150,9 @@ async def set_contract_type(
     record = db.get(ContractFile, file_id)
     if record is None or record.user_id != current_user.id:
         raise HTTPException(404, "File not found")
+    contract_type = db.get(ContractType, request.contract_type_id)
+    if contract_type is None or not contract_type.is_active:
+        raise HTTPException(400, "Contract type is unavailable")
     record.contract_type_id = request.contract_type_id
     record.review_position = request.review_position
     db.commit()

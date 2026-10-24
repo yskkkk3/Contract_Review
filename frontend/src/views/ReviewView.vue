@@ -113,6 +113,13 @@ function onFileChange() {
 
 async function startReview() {
   if (!fileId.value) return ElMessage.warning('请先选择合同')
+  const selectedType = types.value.find((type) => type.name === contractType.value)
+  const selectedFile = files.value.find((file) => file.id === fileId.value)
+  if (selectedType && selectedFile) {
+    await api.setType(selectedFile.id, selectedType.id, stance.value === '乙方' ? 1 : 0)
+    selectedFile.contract_type_id = selectedType.id
+    selectedFile.review_position = stance.value === '乙方' ? 1 : 0
+  }
   abortRef.value?.()
   const session = await api.createSession(`审阅-${Date.now()}`, 'review', fileId.value)
   riskPoints.value = []

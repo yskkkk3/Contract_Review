@@ -18,12 +18,13 @@ from app.api import (
     users,
 )
 from app.core.config import get_settings
-from app.core.db import Base, engine
+from app.core.db import Base, SessionLocal, engine
 from app.core.exceptions import register_exception_handlers
 from app.core.redis import close_redis, init_redis
 from app.middlewares.auth import AuthMiddleware
 from app.middlewares.logging import RequestLogMiddleware
 from app.middlewares.ratelimit import RateLimitMiddleware
+from app.services.contract_type_service import ensure_default_contract_types
 
 settings = get_settings()
 
@@ -31,6 +32,9 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    with SessionLocal() as db:
+        ensure_default_contract_types(db)
+        db.commit()
     await init_redis()
     yield
     await close_redis()

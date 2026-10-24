@@ -11,6 +11,7 @@ class UploadResponse(BaseModel):
     party_b: str = ""
     amount: float = 0.0
     parse_status: str = "parsed"
+    contract_type_id: int | None = None
 
 
 class SetContractTypeRequest(BaseModel):

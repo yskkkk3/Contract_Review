@@ -11,8 +11,23 @@
     <el-table :data="files" v-loading="loading">
       <el-table-column prop="id" label="ID" width="70" />
       <el-table-column prop="title" label="文件名" min-width="220" show-overflow-tooltip />
-      <el-table-column label="类型" width="120">
-        <template #default="{ row }">{{ typeText(row.contract_type_id) }}</template>
+      <el-table-column label="类型" width="170">
+        <template #default="{ row }">
+          <el-select
+            :model-value="row.contract_type_id || undefined"
+            placeholder="选择类型"
+            size="small"
+            :loading="typeUpdating === row.id"
+            @change="onTypeChange(row, $event)"
+          >
+            <el-option
+              v-for="type in activeTypes"
+              :key="type.id"
+              :label="type.name"
+              :value="type.id"
+            />
+          </el-select>
+        </template>
       </el-table-column>
       <el-table-column prop="party_a" label="甲方" width="140" show-overflow-tooltip />
       <el-table-column prop="party_b" label="乙方" width="140" show-overflow-tooltip />
@@ -44,7 +59,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox, type UploadFile } from 'element-plus'
 import { api } from '@/api/contract'
 import { adminApi } from '@/api/dashboard'
@@ -53,9 +68,11 @@ import type { ContractFile, ContractType } from '@/types/api'
 const files = ref<ContractFile[]>([])
 const types = ref<ContractType[]>([])
 const loading = ref(false)
+const typeUpdating = ref<number>()
 const page = ref(1)
 const pageSize = 10
 const total = ref(0)
+const activeTypes = computed(() => types.value.filter((type) => Boolean(type.is_active)))
 
 onMounted(load)
 
@@ -96,6 +113,18 @@ async function onDelete(row: ContractFile) {
   await api.remove(row.id)
   ElMessage.success('已删除')
   await load()
+}
+
+async function onTypeChange(row: ContractFile, typeId: number) {
+  if (row.contract_type_id === typeId) return
+  typeUpdating.value = row.id
+  try {
+    await api.setType(row.id, typeId, row.review_position === 1 ? 1 : 0)
+    row.contract_type_id = typeId
+    ElMessage.success(`已设置为${typeText(typeId)}`)
+  } finally {
+    typeUpdating.value = undefined
+  }
 }
 
 function statusText(status: string) {
