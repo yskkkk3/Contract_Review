@@ -154,6 +154,7 @@ activemq-data/
 # Local/generated indexes and TypeScript incremental build cache
 backend/data/kb_bm25.pkl
 backend/data/contract_samples_*/*.pdf
+backend/data/contract_samples_*/*.json
 frontend/*.tsbuildinfo
 .venv
 env/
