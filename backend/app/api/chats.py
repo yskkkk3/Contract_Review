@@ -1,4 +1,6 @@
 """Chat routes: SSE streaming chat around a contract session."""
+import time
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session as DBSession
 
@@ -18,6 +20,7 @@ async def chat(
     current_user: User = Depends(get_current_user),
 ):
     """流式聊天（SSE）。实现见 app/services/chat_service.py（M4）。"""
+    started_at = time.monotonic()
     if request.session_id is None:
         raise HTTPException(400, "session_id required")
     session = db.get(Session, request.session_id)
@@ -25,4 +28,4 @@ async def chat(
         raise HTTPException(404, "Session not found")
     from app.services.chat_service import stream_chat
 
-    return await stream_chat(request, session, current_user, db)
+    return await stream_chat(request, session, current_user, db, started_at=started_at)

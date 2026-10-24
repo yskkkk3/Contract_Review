@@ -36,3 +36,16 @@ def test_disabled_records_nothing(monkeypatch):
     _reset()
     metrics.record("chat", ttft_ms=1.0, total_ms=2.0)
     assert snapshot() == {}
+
+
+def test_phase_percentiles_and_failures_are_visible():
+    _reset()
+    metrics.record("chat", ttft_ms=500, total_ms=1000,
+                   phases_ms={"contract_load_ms": 200, "model_first_content_ms": 300})
+    metrics.record("chat", total_ms=3000, status="error",
+                   phases_ms={"contract_load_ms": 400})
+    snap = snapshot()["chat"]
+    assert snap["statuses"] == {"error": 1, "success": 1}
+    assert snap["phases_ms"]["contract_load_ms"]["p50"] == 300
+    assert snap["phases_ms"]["model_first_content_ms"]["p50"] == 300
+    assert snap["ttft_p50"] == 500

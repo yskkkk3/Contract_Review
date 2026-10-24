@@ -22,3 +22,8 @@ def load_risk_dim_prompt(risk_dim: str) -> str:
     safe = re.sub(r'[\\/:*?"<>|]', "_", risk_dim)
     path = PROMPTS_DIR / "risk_dims" / f"{safe}.md"
     return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+def load_chat_history_excerpt(excerpt: str) -> str:
+    """Label extracted historical text without treating prior answers as legal evidence."""
+    return load_prompt("chat_history_excerpt", excerpt=excerpt)

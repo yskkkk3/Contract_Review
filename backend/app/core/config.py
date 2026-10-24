@@ -2,6 +2,7 @@
 from functools import lru_cache
 from urllib.parse import quote
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -124,6 +125,10 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = False
     rate_limit_per_minute: int = 120
     chat_cache_ttl: int = 1800
+    chat_contract_cache_ttl: float = 300.0
+    chat_contract_cache_entries: int = 64
+    chat_history_max_chars: int = 24000  # 软预算；0禁用，含糊追问和全局复查仍用完整历史
+    chat_history_recent_messages: int = Field(default=12, ge=2)
 
     # Agent 工具调用（Tool Calling）
     agent_tool_calling_enabled: bool = True
@@ -140,8 +145,11 @@ class Settings(BaseSettings):
     llm_brief_disable_thinking: bool | None = None  # None仅官网自动处理；兼容中转可显式开启
     llm_brief_reasoning_effort: str | None = None  # 仅在当前供应商验证后显式配置
     llm_http_trust_env: bool = True  # 含系统代理；本地代理故障时可显式关闭
-    max_concurrent_llm: int = 4         # LLM 并发上限（应用层信号量，防突发打满供应商）
-    chat_stream_timeout: float = 30.0   # 聊天流式超时（秒）
+    max_concurrent_llm: int = Field(default=4, ge=1)
+    llm_chat_reserved_slots: int = Field(default=1, ge=0)  # 总容量>1时保留聊天容量
+    chat_stream_timeout: float = Field(default=30.0, gt=0)  # 上游无活动超时（含思考活动）
+    chat_first_content_timeout: float = Field(default=120.0, gt=0)
+    chat_heartbeat_interval: float = Field(default=10.0, gt=0)
     review_stream_timeout: float = 120.0  # 审阅流式超时（秒）
 
     # MCP
