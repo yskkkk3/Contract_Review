@@ -1,5 +1,18 @@
 import { del, get, post } from './http'
-import type { ComparisonResult, ContractFile, SessionInfo } from '@/types/api'
+import type { ComparisonResult, ContractFile, PageResponse, SessionInfo } from '@/types/api'
+
+export interface ContractSearchParams {
+  title?: string
+  party?: string
+  contract_type_id?: number
+  parse_status?: string
+  amount_min?: number
+  amount_max?: number
+  created_from?: string
+  created_to?: string
+  page?: number
+  page_size?: number
+}
 
 export const api = {
   upload(file: File) {
@@ -11,6 +24,9 @@ export const api = {
   },
   list() {
     return get<ContractFile[]>('/contracts')
+  },
+  search(params: ContractSearchParams) {
+    return get<PageResponse<ContractFile>>('/contracts/search', { params })
   },
   remove(fileId: number) {
     return del<null>(`/contracts/${fileId}`)

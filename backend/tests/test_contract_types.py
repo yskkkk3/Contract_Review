@@ -1,9 +1,12 @@
 """Contract type seeding, classification and assignment tests."""
 
 import io
+from datetime import datetime
 
 import pytest
 
+from app.core.db import SessionLocal
+from app.models.contract import ContractFile
 from app.services.contract_type_service import classify_contract_type
 
 
@@ -85,3 +88,78 @@ def test_manual_type_rejects_unknown_id(client, auth_headers):
         headers=auth_headers,
     )
     assert response.status_code == 400
+
+
+def test_contract_search_combines_filters_and_paginates(client, auth_headers):
+    titles = [
+        "智慧校园系统合同.pdf",
+        "医疗设备采购合同.pdf",
+        "消防维保服务合同.pdf",
+    ]
+    file_ids = []
+    for title in titles:
+        response = client.post(
+            "/api/contracts/upload_raw",
+            files={"file": (title, io.BytesIO(b"%PDF-test"), "application/pdf")},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200, response.text
+        file_ids.append(response.json()["data"]["file_id"])
+
+    with SessionLocal() as db:
+        first = db.get(ContractFile, file_ids[0])
+        second = db.get(ContractFile, file_ids[1])
+        third = db.get(ContractFile, file_ids[2])
+        assert first is not None and second is not None and third is not None
+        first.party_a = "河南大学"
+        first.party_b = "智慧科技有限公司"
+        first.amount = 1_200_000
+        first.created_at = datetime(2026, 10, 20, 10, 0, 0)
+        second.party_a = "某中心医院"
+        second.amount = 500_000
+        second.created_at = datetime(2026, 10, 21, 10, 0, 0)
+        third.amount = 3_000_000
+        third.created_at = datetime(2026, 10, 22, 10, 0, 0)
+        db.commit()
+
+    combined = client.get(
+        "/api/contracts/search",
+        params={
+            "title": "智慧校园",
+            "party": "河南大学",
+            "parse_status": "uploaded",
+            "amount_min": 1_000_000,
+            "amount_max": 2_000_000,
+            "created_from": "2026-10-20",
+            "created_to": "2026-10-20",
+        },
+        headers=auth_headers,
+    )
+    assert combined.status_code == 200, combined.text
+    payload = combined.json()["data"]
+    assert payload["total"] == 1
+    assert payload["items"][0]["id"] == file_ids[0]
+
+    paged = client.get(
+        "/api/contracts/search",
+        params={"page": 2, "page_size": 2},
+        headers=auth_headers,
+    )
+    assert paged.status_code == 200, paged.text
+    page_data = paged.json()["data"]
+    assert page_data["total"] == 3
+    assert page_data["page"] == 2
+    assert page_data["page_size"] == 2
+    assert len(page_data["items"]) == 1
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"amount_min": 200, "amount_max": 100},
+        {"created_from": "2026-10-22", "created_to": "2026-10-20"},
+    ],
+)
+def test_contract_search_rejects_reversed_ranges(client, auth_headers, params):
+    response = client.get("/api/contracts/search", params=params, headers=auth_headers)
+    assert response.status_code == 422

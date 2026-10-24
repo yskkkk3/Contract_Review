@@ -1,8 +1,10 @@
 """Contract file routes: upload / parse / download / delete / set type."""
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
+from sqlalchemy import or_
 from sqlalchemy.orm import Session as DBSession
 
 from app.core.db import get_db
@@ -10,7 +12,7 @@ from app.core.security import get_current_user
 from app.core.storage import get_storage
 from app.models.contract import ContractFile, ContractType
 from app.models.user import User
-from app.schemas.base import GenericResponse
+from app.schemas.base import GenericResponse, PageResponse
 from app.schemas.contract import (
     ContractFileResponse,
     SetContractTypeRequest,
@@ -157,6 +159,74 @@ async def set_contract_type(
     record.review_position = request.review_position
     db.commit()
     return GenericResponse(msg="contract type set")
+
+
+@router.get("/search", response_model=GenericResponse[PageResponse[ContractFileResponse]])
+async def search_files(
+    title: str | None = None,
+    party: str | None = None,
+    contract_type_id: int | None = Query(
+        default=None,
+        ge=0,
+        description="合同类型 ID；0 表示未分类",
+    ),
+    parse_status: str | None = None,
+    amount_min: float | None = Query(default=None, ge=0),
+    amount_max: float | None = Query(default=None, ge=0),
+    created_from: date | None = None,
+    created_to: date | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+    db: DBSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """按合同属性组合查询当前用户的合同，并在数据库侧分页。"""
+    if amount_min is not None and amount_max is not None and amount_min > amount_max:
+        raise HTTPException(422, "Minimum amount cannot exceed maximum amount")
+    if created_from is not None and created_to is not None and created_from > created_to:
+        raise HTTPException(422, "Start date cannot exceed end date")
+
+    query = db.query(ContractFile).filter(ContractFile.user_id == current_user.id)
+    if normalized_title := (title or "").strip():
+        query = query.filter(ContractFile.title.contains(normalized_title, autoescape=True))
+    if normalized_party := (party or "").strip():
+        query = query.filter(
+            or_(
+                ContractFile.party_a.contains(normalized_party, autoescape=True),
+                ContractFile.party_b.contains(normalized_party, autoescape=True),
+            )
+        )
+    if contract_type_id == 0:
+        query = query.filter(ContractFile.contract_type_id.is_(None))
+    elif contract_type_id is not None:
+        query = query.filter(ContractFile.contract_type_id == contract_type_id)
+    if normalized_status := (parse_status or "").strip():
+        query = query.filter(ContractFile.parse_status == normalized_status)
+    if amount_min is not None:
+        query = query.filter(ContractFile.amount >= amount_min)
+    if amount_max is not None:
+        query = query.filter(ContractFile.amount <= amount_max)
+    if created_from is not None:
+        query = query.filter(ContractFile.created_at >= datetime.combine(created_from, time.min))
+    if created_to is not None:
+        next_day = created_to + timedelta(days=1)
+        query = query.filter(ContractFile.created_at < datetime.combine(next_day, time.min))
+
+    total = query.count()
+    records = (
+        query.order_by(ContractFile.created_at.desc(), ContractFile.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return GenericResponse(
+        data=PageResponse(
+            items=[_to_response(record) for record in records],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+    )
 
 
 @router.get("", response_model=GenericResponse[list[ContractFileResponse]])
