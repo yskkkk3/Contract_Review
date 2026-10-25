@@ -40,7 +40,7 @@ async function authStore(avatarApi = {}, authApi = {}) {
       for (const [key, value] of Object.entries(options.actions)) state[key] = value.bind(state)
       return state
     } },
-    '@/api/auth': { authApi },
+    '@/api/auth': { authApi: { logout: async () => {}, ...authApi } },
     '@/api/avatar': { avatarApi },
     '@/api/http': { TOKEN_KEY: 'token' },
   }
@@ -51,6 +51,22 @@ async function authStore(avatarApi = {}, authApi = {}) {
   await module.evaluate()
   return { store: module.namespace.useAuthStore(), created, revoked, storage }
 }
+
+test('login persists refresh token and explicit logout revokes captured session', async () => {
+  const revocations = []
+  const { store, storage } = await authStore({}, {
+    login: async () => ({ access_token: 'new-access', refresh_token: 'new-refresh' }),
+    me: async () => ({ id: 1 }),
+    logout: async (...args) => { revocations.push(args) },
+  })
+  await store.login('tester', 'password')
+  assert.equal(storage.get('contract_review_refresh_token'), 'new-refresh')
+  const pending = store.logout()
+  assert.equal(storage.has('token'), false)
+  assert.equal(storage.has('contract_review_refresh_token'), false)
+  await pending
+  assert.deepEqual(revocations, [['new-access', 'new-refresh']])
+})
 
 const profile = { id: 1, username: 'example', role: 'user', avatar_url: '/api/users/me/avatar' }
 

@@ -18,6 +18,7 @@ export const useAuthStore = defineStore('auth', {
       const result = await authApi.login(identifier, password)
       this.token = result.access_token
       localStorage.setItem(TOKEN_KEY, result.access_token)
+      localStorage.setItem('contract_review_refresh_token', result.refresh_token)
       await this.fetchMe()
     },
     async register(username: string, password: string) {
@@ -62,11 +63,15 @@ export const useAuthStore = defineStore('auth', {
       this.user = user
       this.clearAvatar()
     },
-    logout() {
+    logout(revoke = true) {
+      const token = this.token
+      const refresh = localStorage.getItem('contract_review_refresh_token')
       this.clearAvatar()
       this.token = ''
       this.user = null
       localStorage.removeItem(TOKEN_KEY)
+      localStorage.removeItem('contract_review_refresh_token')
+      if (revoke && token) return authApi.logout(token, refresh).catch(() => undefined)
     },
   },
 })

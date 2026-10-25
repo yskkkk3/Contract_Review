@@ -32,17 +32,32 @@ export function openSse({ url, kind, token, body, onEvent, signal }: SseOptions)
 
   void (async () => {
     try {
-      const resp = await fetch(url, {
+      const request = (access: string) => fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${access}`,
         },
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
       })
+      let resp = await request(token)
+      if (resp.status === 401) {
+        try {
+          const { refreshAccessToken } = await import('@/api/http')
+          token = await refreshAccessToken()
+          if (controller.signal.aborted) return
+          resp = await request(token)
+        } catch {
+          // The error frame below releases the view's loading state.
+        }
+        if (resp.status === 401) {
+          const { expireSession } = await import('@/api/http')
+          await expireSession(token)
+        }
+      }
       const renewedToken = resp.headers.get('x-access-token')
-      if (renewedToken) localStorage.setItem('contract_review_token', renewedToken)
+      if (renewedToken && localStorage.getItem('contract_review_token') === token) localStorage.setItem('contract_review_token', renewedToken)
       if (!resp.ok || !resp.body) {
         let message = `SSE 连接失败: ${resp.status}`
         try {

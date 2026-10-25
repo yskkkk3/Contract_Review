@@ -41,8 +41,8 @@ watch(() => route.path, () => {
   scrolled.value = false
 })
 
-function onLogout() {
-  auth.logout()
+async function onLogout() {
+  await auth.logout()
   router.push('/login')
 }
 

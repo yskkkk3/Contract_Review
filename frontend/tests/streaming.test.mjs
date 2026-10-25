@@ -229,7 +229,7 @@ test('HTTP 401 logs out the in-memory auth store and redirects', async () => {
   let rejectResponse
   let loggedOut = false
   let target
-  const context = createContext({})
+  const context = createContext({ localStorage: { getItem: () => null } })
   const imports = {
     axios: { default: { create: () => ({ interceptors: {
       request: { use() {} },
