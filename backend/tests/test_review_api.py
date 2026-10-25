@@ -81,7 +81,6 @@ def upload_review_context(client, auth_headers, monkeypatch):
 def test_review_sse_flow(client, auth_headers, monkeypatch, tmp_path):
     """端到端：上传 → 建会话 → 审阅 SSE → 事件流 + DB 落库。"""
 
-    from app.rag import service as rag_service
     from app.services import review_service
 
     monkeypatch.setattr(review_service, "get_graph", lambda rag: FakeGraph())
@@ -93,7 +92,7 @@ def test_review_sse_flow(client, auth_headers, monkeypatch, tmp_path):
         async def close(self):
             pass
 
-    monkeypatch.setattr(rag_service, "get_rag_service", lambda: FakeRAG())
+    monkeypatch.setattr(review_service, "get_rag_service", lambda: FakeRAG())
 
     # 上传 docx（用最小合法 docx 结构）
     from docx import Document

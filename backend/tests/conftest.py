@@ -92,3 +92,15 @@ def auth_headers(client):
     assert login.status_code == 200, login.text
     token = login.json()["data"]["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture()
+def admin_headers(auth_headers):
+    from app.core.db import SessionLocal
+    from app.models.user import User
+
+    with SessionLocal() as db:
+        user = db.query(User).filter_by(username="tester").one()
+        user.role = "admin"
+        db.commit()
+    return auth_headers

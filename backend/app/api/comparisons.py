@@ -3,6 +3,8 @@ import json
 from difflib import SequenceMatcher
 
 from docx import Document
+from docx.table import Table
+from docx.text.paragraph import Paragraph
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session as DBSession
 
@@ -28,7 +30,23 @@ router = APIRouter(prefix="/comparisons", tags=["comparisons"])
 
 def _docx_paragraphs(path: str) -> list[str]:
     doc = Document(path)
-    return [p.text for p in doc.paragraphs if p.text.strip()]
+
+    def blocks(container):
+        for block in container.iter_inner_content():
+            if isinstance(block, Paragraph):
+                if block.text.strip():
+                    yield block.text
+            elif isinstance(block, Table):
+                for row in block.rows:
+                    # Merged cells can appear more than once in row.cells.
+                    seen = set()
+                    for cell in row.cells:
+                        if cell._tc in seen:
+                            continue
+                        seen.add(cell._tc)
+                        yield "[单元格] " + "\n".join(blocks(cell))
+
+    return list(blocks(doc))
 
 
 def _char_diff(a: str, b: str) -> list[CharDiff]:
@@ -57,14 +75,14 @@ def _diff_docs(std_path: str, cmp_path: str) -> tuple[DiffSummary, list[Paragrap
             for idx in range(i1, i2):
                 diffs.append(
                     ParagraphDiff(
-                        operation="equal", std_index=idx, cmp_index=idx,
-                        standard_text=std[idx], comparison_text=std[idx],
+                        operation="equal", std_index=idx, cmp_index=j1 + idx - i1,
+                        standard_text=std[idx], comparison_text=cmp[j1 + idx - i1],
                     )
                 )
         else:
             diff_count += 1
             for idx in range(i1, i2):
-                j_idx = j1 + (idx - i1) if j1 < j2 else None
+                j_idx = j1 + (idx - i1) if j1 + idx - i1 < j2 else None
                 cmp_text = cmp[j_idx] if j_idx is not None and j_idx < len(cmp) else ""
                 diffs.append(
                     ParagraphDiff(
@@ -100,14 +118,14 @@ async def start_comparison(
 ):
     std = db.get(ContractFile, request.standard_file_id)
     cmp = db.get(ContractFile, request.comparison_file_id)
-    if std is None or cmp is None:
+    if std is None or cmp is None or std.user_id != current_user.id or cmp.user_id != current_user.id:
         raise HTTPException(404, "File not found")
     if std.file_type != "docx" or cmp.file_type != "docx":
         raise HTTPException(400, "Only docx files supported")
 
     if request.session_id:
         session = db.get(Session, request.session_id)
-        if session is None or session.user_id != current_user.id:
+        if session is None or session.user_id != current_user.id or session.session_type != SessionTypeEnum.COMPARE:
             raise HTTPException(404, "Session not found")
         session_id = session.id
     else:
@@ -136,6 +154,9 @@ async def start_comparison(
         )
         db.add(task)
     task.diff_summary = json.dumps(summary.model_dump(), ensure_ascii=False)
+    task.standard_file_id = std.id
+    task.comparison_file_id = cmp.id
+    session.file_id = std.id
     task.diff_result = json.dumps([d.model_dump() for d in diffs], ensure_ascii=False)
     db.commit()
     db.refresh(task)

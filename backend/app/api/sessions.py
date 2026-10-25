@@ -28,7 +28,7 @@ async def create_session(
 ):
     if request.file_id:
         contract = db.get(ContractFile, request.file_id)
-        if contract is None:
+        if contract is None or contract.user_id != current_user.id:
             raise HTTPException(404, "Contract file not found")
     session = Session(
         user_id=current_user.id,
@@ -88,6 +88,12 @@ async def delete_session(
     session = db.get(Session, session_id)
     if session is None or session.user_id != current_user.id:
         raise HTTPException(404, "Session not found")
+    if db.query(ReviewTask).filter_by(session_id=session_id, status="processing").first():
+        raise HTTPException(409, "Review is still running")
+    db.query(ReviewResult).filter_by(session_id=session_id).delete()
+    db.query(ReviewTask).filter_by(session_id=session_id).delete()
+    db.query(ComparisonTask).filter_by(session_id=session_id).delete()
+    db.query(Message).filter_by(session_id=session_id).delete()
     db.delete(session)
     db.commit()
     return GenericResponse(msg="session deleted")
@@ -112,7 +118,8 @@ async def session_history(
         return GenericResponse(data=[_msg_dict(m) for m in messages])
 
     if session.session_type == SessionTypeEnum.REVIEW:
-        task = db.query(ReviewTask).filter(ReviewTask.session_id == session_id).first()
+        task = (db.query(ReviewTask).filter(ReviewTask.session_id == session_id)
+                .order_by((ReviewTask.status == "completed").desc(), ReviewTask.id.desc()).first())
         if task is None:
             return GenericResponse(data=[])
         results = (

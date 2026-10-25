@@ -29,6 +29,18 @@ async def acquire_lock(lock_key: str, token: str, ttl: int = 10) -> bool:
     return bool(await get_redis().set(lock_key, token, nx=True, ex=ttl))
 
 
+async def renew_lock(lock_key: str, token: str, ttl: int) -> bool:
+    """Only the current owner can extend a lease before committing its result."""
+    redis_client = get_redis()
+    lua = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('expire', KEYS[1], ARGV[2]) else return 0 end"
+    try:
+        return bool(await redis_client.eval(lua, 1, lock_key, token, ttl))
+    except redis.ResponseError:
+        if await redis_client.get(lock_key) == token:
+            return bool(await redis_client.expire(lock_key, ttl))
+        return False
+
+
 async def release_lock(lock_key: str, token: str) -> None:
     """Lua 原子释放：仅当持有者是自己时删除，防止误删他人锁。"""
     lua = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"

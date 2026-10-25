@@ -5,6 +5,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session as DBSession
 
 from app.core.db import get_db
+from app.core.security import get_current_user
 from app.models.contract import ContractFile
 from app.models.review import ReviewResult, ReviewTask
 from app.models.session_message import Session
@@ -17,7 +18,7 @@ from app.schemas.dashboard import (
     TrendItem,
 )
 
-router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+router = APIRouter(prefix="/dashboard", tags=["dashboard"], dependencies=[Depends(get_current_user)])
 
 
 @router.get("/overview", response_model=GenericResponse[OverviewResponse])

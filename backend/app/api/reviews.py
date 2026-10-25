@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session as DBSession
 from app.core.db import get_db
 from app.core.security import get_current_user
 from app.models.contract import ContractFile
-from app.models.review import ReviewResult
+from app.models.review import ReviewResult, ReviewTask
 from app.models.user import User
 from app.schemas.base import GenericResponse
 from app.schemas.review import AcceptContractFileRequest, AcceptRiskPointRequest, ReviewStartRequest
@@ -33,7 +33,9 @@ async def accept_risk_point(
 ):
     result = (
         db.query(ReviewResult)
+        .join(ReviewTask, ReviewTask.id == ReviewResult.task_id)
         .filter(
+            ReviewTask.user_id == current_user.id,
             ReviewResult.task_id == request.task_id,
             ReviewResult.session_id == request.session_id,
             ReviewResult.index == request.index,
@@ -54,7 +56,7 @@ async def accept_contract_file(
     current_user: User = Depends(get_current_user),
 ):
     record = db.get(ContractFile, request.file_id)
-    if record is None:
+    if record is None or record.user_id != current_user.id:
         raise HTTPException(404, "Contract file not found")
     record.is_accepted = request.is_accepted
     db.commit()

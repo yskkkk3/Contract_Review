@@ -95,6 +95,8 @@ async def _llm_summary(points: list[dict], stance: str) -> dict:
 
 
 async def arbitration_node(state: ReviewState) -> dict:
+    if state.get("intent") not in (None, "review"):
+        state = {**state, "errors": [*state.get("errors", []), "审阅流程未执行"]}
     points = _arbitrate_rules(state["gated"], state.get("chunks"))
     summary = await _llm_summary(points, state["stance"])
     summary["overall_risk"] = _overall_risk(points)

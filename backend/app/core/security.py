@@ -141,3 +141,9 @@ async def get_current_user(
     if user is None or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User inactive or missing")
     return user
+
+
+async def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
+    if current_user.role != "admin":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Administrator permission required")
+    return current_user

@@ -5,16 +5,15 @@
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.core.security import TOKEN_TYPE_ACCESS, decode_token, renew_access_token
+from app.core.security import TOKEN_TYPE_ACCESS, _is_revoked, decode_token, renew_access_token
 
 RENEWED_ACCESS_TOKEN_HEADER = "X-Access-Token"
 
-# 无需登录的公开路径（前缀匹配）
-PUBLIC_PATHS = (
-    "/docs", "/redoc", "/openapi.json", "/health",
-    "/api/auth/login", "/api/auth/refresh", "/api/auth/cas_login",
-    "/api/users", "/api/contracts/upload_raw",
-)
+# Only these API operations are anonymous; user-management subpaths are protected.
+PUBLIC_OPERATIONS = {
+    ("POST", "/api/auth/login"), ("POST", "/api/auth/refresh"),
+    ("GET", "/api/auth/cas_login"), ("POST", "/api/users"),
+}
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -25,15 +24,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if not self.enabled or not request.url.path.startswith("/api/"):
             return await call_next(request)
-        if any(request.url.path.startswith(p) for p in PUBLIC_PATHS):
+        if request.method == "OPTIONS" or (request.method, request.url.path.rstrip("/")) in PUBLIC_OPERATIONS:
             return await call_next(request)
 
         auth = request.headers.get("Authorization", "")
         if not auth.startswith("Bearer "):
-            # 无 token：放行，由路由级 Depends(get_current_user) 决定是否强制鉴权（公开接口可匿名）
-            return await call_next(request)
+            return Response(status_code=401, content='{"code":401,"msg":"Not authenticated"}', media_type="application/json")
         try:
             payload = decode_token(auth[7:], TOKEN_TYPE_ACCESS)
+            if await _is_revoked(payload.get("user_id"), auth[7:], payload.get("sid")):
+                return Response(status_code=401, content='{"code":401,"msg":"Token revoked"}', media_type="application/json")
         except Exception:
             # 携带了 token 但无效/过期：全局拦截（与路由 Depends 双层校验）
             return Response(status_code=401, content='{"code":401,"msg":"Invalid or expired token"}', media_type="application/json")

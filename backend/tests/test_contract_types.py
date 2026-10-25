@@ -34,8 +34,8 @@ def test_classify_contract_type(title, expected):
     assert classify_contract_type(title) == expected
 
 
-def test_default_types_are_seeded(client):
-    response = client.get("/api/contract-types")
+def test_default_types_are_seeded(client, auth_headers):
+    response = client.get("/api/contract-types", headers=auth_headers)
     assert response.status_code == 200
     names = {item["name"] for item in response.json()["data"]}
     assert {
@@ -59,7 +59,7 @@ def test_raw_upload_assigns_type_and_allows_manual_override(client, auth_headers
     initial_type_id = upload.json()["data"]["contract_type_id"]
     assert initial_type_id is not None
 
-    types = client.get("/api/contract-types").json()["data"]
+    types = client.get("/api/contract-types", headers=auth_headers).json()["data"]
     by_name = {item["name"]: item["id"] for item in types}
     assert initial_type_id == by_name["运维与维保"]
 

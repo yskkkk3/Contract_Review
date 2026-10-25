@@ -5,17 +5,19 @@ import re
 import time
 from datetime import UTC, datetime
 
+from anyio import CancelScope
+from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session as DBSession
 
 from app.agent.graph import get_graph
 from app.agent.state import ReviewState
-from app.core.cache import acquire_lock, release_lock
+from app.core.cache import acquire_lock, release_lock, renew_lock
 from app.core.metrics import record as record_metric
 from app.core.storage import get_storage
 from app.models.contract import ContractFile
 from app.models.review import ReviewResult, ReviewTask
-from app.models.session_message import Session
+from app.models.session_message import Session, SessionTypeEnum
 from app.models.user import User
 from app.rag.service import RAGService, get_rag_service
 from app.schemas.review import ReviewStartRequest
@@ -55,37 +57,16 @@ async def stream_review_events(
     db: DBSession,
     rag: RAGService | None = None,
 ) -> StreamingResponse:
-    rag = rag or get_rag_service()
-
     session = db.get(Session, request.session_id)
     if session is None or session.user_id != current_user.id:
-        raise PermissionError("session not found")
+        raise HTTPException(404, "Session not found")
+    if session.session_type != SessionTypeEnum.REVIEW:
+        raise HTTPException(400, "A review session is required")
     contract = db.get(ContractFile, session.file_id) if session.file_id else None
-    if contract is None:
-        raise PermissionError("contract file not found")
+    if contract is None or contract.user_id != current_user.id:
+        raise HTTPException(404, "Contract file not found")
     if contract.parse_status != "parsed" or not contract.content_path:
-        raise PermissionError("file not parsed, review unsupported")
-
-    # 清理旧任务
-    old_task = db.query(ReviewTask).filter(ReviewTask.session_id == request.session_id).first()
-    if old_task:
-        db.query(ReviewResult).filter(ReviewResult.task_id == old_task.id).delete()
-        db.delete(old_task)
-        db.commit()
-
-    task = ReviewTask(
-        session_id=request.session_id,
-        file_id=contract.id,
-        user_id=current_user.id,
-        stance=request.stance,
-        intensity=request.intensity,
-        description=request.description or "",
-        contract_type=request.contract_type or "",
-        status="processing",
-    )
-    db.add(task)
-    db.commit()
-    db.refresh(task)
+        raise HTTPException(400, "File not parsed, review unsupported")
 
     content = get_storage().read_text(contract.content_path)
     chunks = split_contract_clauses(content)
@@ -119,15 +100,28 @@ async def stream_review_events(
             yield f"data: {json.dumps({'event': 'error', 'data': {'message': '该会话已有审阅任务进行中，请等待完成'}}, ensure_ascii=False)}\n\n"
             return
         t0 = time.monotonic()
+        task = None
+        stream = None
         try:
+            # Retain the last successful result until the replacement commits in full.
+            task = ReviewTask(
+                session_id=request.session_id, file_id=state["file_id"],
+                user_id=state["user_id"], stance=request.stance, intensity=request.intensity,
+                description=request.description or "", contract_type=request.contract_type or "",
+                status="processing",
+            )
+            db.add(task)
+            db.commit()
+            db.refresh(task)
             # 首事件 meta 骨架：与 LLM 无关，首字节 <100ms 必达
             # （routed/risk_dims 此时尚未由 router 节点填充，故不输出，避免误导）
             yield f"data: {json.dumps({'event': 'meta', 'data': {'task_id': task.id, 'session_id': request.session_id, 'chunk_count': len(chunks)}}, ensure_ascii=False)}\n\n"
-            graph = get_graph(rag)
+            graph = get_graph(rag or get_rag_service())
             # 流式执行：custom 模式推送专家实时结果，updates 模式收集仲裁后的最终状态
             stream = graph.astream(state, stream_mode=["custom", "updates"])
             final_points: list[dict] = []
             summary: dict = {}
+            arbitration_seen = False
             streamed_index = 0
             async for mode, payload in stream:
                 if mode == "custom":
@@ -145,17 +139,21 @@ async def stream_review_events(
                 elif mode == "updates":
                     for node, upd in payload.items():
                         if node == "arbitration" and isinstance(upd, dict):
+                            arbitration_seen = True
                             final_points = upd.get("final_risk_points") or []
                             summary = upd.get("summary") or {}
 
             points = final_points
 
-            # 写入 DB 并按序 SSE 输出
+            if not arbitration_seen:
+                raise RuntimeError("审阅未生成最终结论，已有结果已保留")
+            if not await renew_lock(lock_key, lock_token, ttl=900):
+                raise RuntimeError("审阅锁已过期，本次结果未替换已有结果，请重试")
+            # Replace results atomically. A failed or disconnected run keeps prior results.
+            records = []
             for idx, point in enumerate(points, start=1):
                 record = ReviewResult(
-                    task_id=task.id,
-                    session_id=request.session_id,
-                    index=idx,
+                    task_id=task.id, session_id=request.session_id, index=idx,
                     original_content=point.get("original_content", ""),
                     risk_analysis=point.get("risk_analysis", ""),
                     risk_level=point.get("risk_level", "中"),
@@ -163,31 +161,29 @@ async def stream_review_events(
                     risk_dim=point.get("risk_dim", ""),
                 )
                 db.add(record)
-                db.commit()
-                db.refresh(record)
-                msg = json.dumps(
-                    {
-                        "event": "message",
-                        "data": {
-                            "id": record.id,
-                            "task_id": task.id,
-                            "session_id": request.session_id,
-                            "index": idx,
-                            "original_content": record.original_content,
-                            "risk_analysis": record.risk_analysis,
-                            "risk_level": record.risk_level,
-                            "suggested_content": record.suggested_content,
-                            "risk_dim": record.risk_dim,
-                        },
-                    },
-                    ensure_ascii=False,
-                )
-                yield f"data: {msg}\n\n"
-                await asyncio.sleep(0.01)  # 让出事件循环，保证流式可见
-
+                records.append(record)
+            old_ids = db.query(ReviewTask.id).filter(
+                ReviewTask.session_id == request.session_id, ReviewTask.id != task.id,
+                ReviewTask.status != "processing",
+            ).scalar_subquery()
+            db.query(ReviewResult).filter(ReviewResult.task_id.in_(old_ids)).delete(
+                synchronize_session=False,
+            )
+            db.query(ReviewTask).filter(
+                ReviewTask.session_id == request.session_id, ReviewTask.id != task.id,
+                ReviewTask.status != "processing",
+            ).delete(synchronize_session=False)
             task.status = "completed"
             task.completed_at = datetime.now(UTC)
             db.commit()
+            for record in records:
+                msg = {"event": "message", "data": {
+                    "id": record.id, "task_id": task.id, "session_id": request.session_id,
+                    "index": record.index, "original_content": record.original_content,
+                    "risk_analysis": record.risk_analysis, "risk_level": record.risk_level,
+                    "suggested_content": record.suggested_content, "risk_dim": record.risk_dim,
+                }}
+                yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
 
             duration_ms = (time.monotonic() - t0) * 1000
             record_metric("review", ttft_ms=None, total_ms=duration_ms, tokens=None)
@@ -207,11 +203,26 @@ async def stream_review_events(
                 ensure_ascii=False,
             )
             yield f"data: {end_msg}\n\n"
+        except (asyncio.CancelledError, GeneratorExit):
+            db.rollback()
+            if task is not None and task.status == "processing":
+                task.status = "cancelled"
+                db.commit()
+            raise
         except Exception as exc:  # noqa: BLE001
-            task.status = "failed"
-            db.commit()
+            db.rollback()
+            if task is not None and task.status == "processing":
+                task.status = "failed"
+                db.commit()
             yield f"data: {json.dumps({'event': 'error', 'data': {'message': str(exc)}}, ensure_ascii=False)}\n\n"
         finally:
-            await release_lock(lock_key, lock_token)
+            with CancelScope(shield=True):
+                try:
+                    if stream is not None:
+                        await stream.aclose()
+                finally:
+                    await release_lock(lock_key, lock_token)
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return StreamingResponse(gen(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+    })

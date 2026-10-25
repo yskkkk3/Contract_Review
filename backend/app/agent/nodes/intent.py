@@ -55,6 +55,8 @@ async def _llm_classify(text: str) -> tuple[str, float] | None:
 
 async def intent_node(state: ReviewState) -> dict:
     """审阅任务入口：请求描述/意图确认。默认 review，识别失败走规则降级。"""
+    if state.get("intent") == "review":
+        return {"intent": "review", "intent_confidence": 1.0, "errors": state.get("errors", [])}
     text = state.get("description") or f"{state.get('contract_type', '')}合同审阅"
     intent, confidence = "review", 1.0
 

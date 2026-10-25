@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session as DBSession
 
 from app.core.db import get_db
+from app.core.security import get_admin_user, get_current_user
 from app.models.contract import ContractType
 from app.models.model_configs import ModelConfig
 from app.models.prompt_manage import Prompt
@@ -19,7 +20,7 @@ from app.schemas.admin import (
 )
 from app.schemas.base import GenericResponse
 
-router = APIRouter(tags=["admin"])
+router = APIRouter(tags=["admin"], dependencies=[Depends(get_current_user)])
 
 
 # ================= contract types =================
@@ -29,7 +30,7 @@ async def list_contract_types(db: DBSession = Depends(get_db)):
     return GenericResponse(data=[_ct_to_resp(t) for t in items])
 
 
-@router.post("/contract-types", response_model=GenericResponse[ContractTypeResponse])
+@router.post("/contract-types", response_model=GenericResponse[ContractTypeResponse], dependencies=[Depends(get_admin_user)])
 async def create_contract_type(request: ContractTypeCreate, db: DBSession = Depends(get_db)):
     if db.query(ContractType).filter(ContractType.name == request.name).first():
         raise HTTPException(400, "Contract type already exists")
@@ -40,7 +41,7 @@ async def create_contract_type(request: ContractTypeCreate, db: DBSession = Depe
     return GenericResponse(data=_ct_to_resp(item))
 
 
-@router.put("/contract-types/{type_id}", response_model=GenericResponse[ContractTypeResponse])
+@router.put("/contract-types/{type_id}", response_model=GenericResponse[ContractTypeResponse], dependencies=[Depends(get_admin_user)])
 async def update_contract_type(
     type_id: int, request: ContractTypeUpdate, db: DBSession = Depends(get_db)
 ):
@@ -56,7 +57,7 @@ async def update_contract_type(
     return GenericResponse(data=_ct_to_resp(item))
 
 
-@router.post("/contract-types/{type_id}/activate", response_model=GenericResponse[ContractTypeResponse])
+@router.post("/contract-types/{type_id}/activate", response_model=GenericResponse[ContractTypeResponse], dependencies=[Depends(get_admin_user)])
 async def activate_contract_type(type_id: int, is_active: int = 1, db: DBSession = Depends(get_db)):
     item = db.get(ContractType, type_id)
     if item is None:
@@ -68,7 +69,7 @@ async def activate_contract_type(type_id: int, is_active: int = 1, db: DBSession
 
 
 # ================= prompts =================
-@router.get("/prompts", response_model=GenericResponse[list[PromptResponse]])
+@router.get("/prompts", response_model=GenericResponse[list[PromptResponse]], dependencies=[Depends(get_admin_user)])
 async def list_prompts(level: str | None = None, db: DBSession = Depends(get_db)):
     q = db.query(Prompt)
     if level:
@@ -77,7 +78,7 @@ async def list_prompts(level: str | None = None, db: DBSession = Depends(get_db)
     return GenericResponse(data=[_p_to_resp(p) for p in items])
 
 
-@router.post("/prompts", response_model=GenericResponse[PromptResponse])
+@router.post("/prompts", response_model=GenericResponse[PromptResponse], dependencies=[Depends(get_admin_user)])
 async def create_prompt(request: PromptCreate, db: DBSession = Depends(get_db)):
     item = Prompt(**request.model_dump())
     db.add(item)
@@ -86,7 +87,7 @@ async def create_prompt(request: PromptCreate, db: DBSession = Depends(get_db)):
     return GenericResponse(data=_p_to_resp(item))
 
 
-@router.put("/prompts/{prompt_id}", response_model=GenericResponse[PromptResponse])
+@router.put("/prompts/{prompt_id}", response_model=GenericResponse[PromptResponse], dependencies=[Depends(get_admin_user)])
 async def update_prompt(
     prompt_id: int, request: PromptUpdate, db: DBSession = Depends(get_db)
 ):
@@ -100,7 +101,7 @@ async def update_prompt(
     return GenericResponse(data=_p_to_resp(item))
 
 
-@router.delete("/prompts/{prompt_id}", response_model=GenericResponse)
+@router.delete("/prompts/{prompt_id}", response_model=GenericResponse, dependencies=[Depends(get_admin_user)])
 async def delete_prompt(prompt_id: int, db: DBSession = Depends(get_db)):
     item = db.get(Prompt, prompt_id)
     if item is None:
@@ -111,7 +112,7 @@ async def delete_prompt(prompt_id: int, db: DBSession = Depends(get_db)):
 
 
 # ================= model configs =================
-@router.get("/model-configs", response_model=GenericResponse[list[ModelConfigResponse]])
+@router.get("/model-configs", response_model=GenericResponse[list[ModelConfigResponse]], dependencies=[Depends(get_admin_user)])
 async def list_model_configs(model_type: str | None = None, db: DBSession = Depends(get_db)):
     q = db.query(ModelConfig)
     if model_type:
@@ -120,7 +121,7 @@ async def list_model_configs(model_type: str | None = None, db: DBSession = Depe
     return GenericResponse(data=[_m_to_resp(m) for m in items])
 
 
-@router.post("/model-configs", response_model=GenericResponse[ModelConfigResponse])
+@router.post("/model-configs", response_model=GenericResponse[ModelConfigResponse], dependencies=[Depends(get_admin_user)])
 async def create_model_config(request: ModelConfigCreate, db: DBSession = Depends(get_db)):
     item = ModelConfig(**request.model_dump())
     db.add(item)
@@ -129,7 +130,7 @@ async def create_model_config(request: ModelConfigCreate, db: DBSession = Depend
     return GenericResponse(data=_m_to_resp(item))
 
 
-@router.put("/model-configs/{model_id}", response_model=GenericResponse[ModelConfigResponse])
+@router.put("/model-configs/{model_id}", response_model=GenericResponse[ModelConfigResponse], dependencies=[Depends(get_admin_user)])
 async def update_model_config(
     model_id: int, request: ModelConfigUpdate, db: DBSession = Depends(get_db)
 ):
@@ -143,7 +144,7 @@ async def update_model_config(
     return GenericResponse(data=_m_to_resp(item))
 
 
-@router.delete("/model-configs/{model_id}", response_model=GenericResponse)
+@router.delete("/model-configs/{model_id}", response_model=GenericResponse, dependencies=[Depends(get_admin_user)])
 async def delete_model_config(model_id: int, db: DBSession = Depends(get_db)):
     item = db.get(ModelConfig, model_id)
     if item is None:

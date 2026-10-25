@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.security import hash_password
+from app.core.redis import get_redis
+from app.core.security import get_admin_user, get_current_user, hash_password
 from app.models.user import User
 from app.schemas.base import GenericResponse
 from app.schemas.user import UserCreate, UserResponse, UserUpdate
@@ -23,14 +24,19 @@ async def create_user(request: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/{user_id}", response_model=GenericResponse[UserResponse])
-async def get_user(user_id: int, db: Session = Depends(get_db)):
+async def get_user(
+    user_id: int, db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.id != user_id and current_user.role != "admin":
+        raise HTTPException(404, "User not found")
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(404, "User not found")
     return GenericResponse(data=_to_response(user))
 
 
-@router.get("", response_model=GenericResponse[list[UserResponse]])
+@router.get("", response_model=GenericResponse[list[UserResponse]], dependencies=[Depends(get_admin_user)])
 async def list_users(db: Session = Depends(get_db)):
     users = db.query(User).filter(User.is_active.is_(True)).all()
     return GenericResponse(data=[_to_response(u) for u in users])
@@ -38,8 +44,11 @@ async def list_users(db: Session = Depends(get_db)):
 
 @router.put("/{user_id}", response_model=GenericResponse[UserResponse])
 async def update_user(
-    user_id: int, request: UserUpdate, db: Session = Depends(get_db)
+    user_id: int, request: UserUpdate, db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if current_user.id != user_id and current_user.role != "admin":
+        raise HTTPException(404, "User not found")
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(404, "User not found")
@@ -49,16 +58,19 @@ async def update_user(
         user.password_hash = hash_password(request.password)
     db.commit()
     db.refresh(user)
+    if request.password or request.username:
+        await get_redis().delete(f"access_token:{user.id}", f"refresh_token:{user.id}")
     return GenericResponse(data=_to_response(user))
 
 
-@router.post("/{user_id}/disable", response_model=GenericResponse)
+@router.post("/{user_id}/disable", response_model=GenericResponse, dependencies=[Depends(get_admin_user)])
 async def disable_user(user_id: int, db: Session = Depends(get_db)):
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(404, "User not found")
     user.is_active = False
     db.commit()
+    await get_redis().delete(f"access_token:{user_id}", f"refresh_token:{user_id}")
     return GenericResponse(msg="user disabled")
 
 

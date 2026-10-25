@@ -90,7 +90,11 @@ def _load_contract_text(db: DBSession, session: Session) -> str:
     if not session.file_id:
         return ""
     contract = db.get(ContractFile, session.file_id)
-    if contract is None or not contract.content_path:
+    if contract is None or contract.user_id != session.user_id:
+        from fastapi import HTTPException
+
+        raise HTTPException(404, "Contract file not found")
+    if not contract.content_path:
         return ""
     try:
         return contract_text_cache.read(contract.user_id, contract.id, contract.content_path)

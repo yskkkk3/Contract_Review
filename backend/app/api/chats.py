@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from app.core.db import get_db
 from app.core.security import get_current_user
-from app.models.session_message import Session
+from app.models.session_message import Session, SessionTypeEnum
 from app.models.user import User
 from app.schemas.chat import ChatRequest
 
@@ -26,6 +26,8 @@ async def chat(
     session = db.get(Session, request.session_id)
     if session is None or session.user_id != current_user.id:
         raise HTTPException(404, "Session not found")
+    if session.session_type != SessionTypeEnum.CHAT:
+        raise HTTPException(400, "A chat session is required")
     from app.services.chat_service import stream_chat
 
     return await stream_chat(request, session, current_user, db, started_at=started_at)

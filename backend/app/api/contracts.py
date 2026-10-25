@@ -1,16 +1,21 @@
 """Contract file routes: upload / parse / download / delete / set type."""
+import logging
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 
 from app.core.db import get_db
 from app.core.security import get_current_user
 from app.core.storage import get_storage
+from app.models.comparison import ComparisonTask
 from app.models.contract import ContractFile, ContractType
+from app.models.review import ReviewTask
+from app.models.session_message import Session
 from app.models.user import User
 from app.schemas.base import GenericResponse, PageResponse
 from app.schemas.contract import (
@@ -116,9 +121,12 @@ async def upload_raw(
 
 
 @router.get("/{file_id}/download")
-async def download(file_id: int, db: DBSession = Depends(get_db)):
+async def download(
+    file_id: int, db: DBSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     record = db.get(ContractFile, file_id)
-    if record is None:
+    if record is None or record.user_id != current_user.id:
         raise HTTPException(404, "File not found")
     storage = get_storage()
     if not storage.exists(record.file_path):
@@ -136,11 +144,30 @@ async def delete_file(
     record = db.get(ContractFile, file_id)
     if record is None or record.user_id != current_user.id:
         raise HTTPException(404, "File not found")
-    storage = get_storage()
-    storage.delete(record.file_path)
-    storage.delete(record.content_path)
+    referenced = (
+        db.query(Session.id).filter(Session.file_id == file_id).first()
+        or db.query(ReviewTask.id).filter(ReviewTask.file_id == file_id).first()
+        or db.query(ComparisonTask.id).filter(or_(
+            ComparisonTask.standard_file_id == file_id,
+            ComparisonTask.comparison_file_id == file_id,
+        )).first()
+    )
+    if referenced:
+        raise HTTPException(409, "Contract is referenced by a session; delete the session first")
+    paths = (record.file_path, record.content_path)
     db.delete(record)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, "Contract is still referenced") from exc
+    # A rejected database deletion must never remove the only copy of a contract.
+    storage = get_storage()
+    for path in paths:
+        try:
+            storage.delete(path)
+        except Exception:
+            logging.getLogger(__name__).exception("Stored contract cleanup failed file_id=%s", file_id)
     return GenericResponse(msg="file deleted")
 
 

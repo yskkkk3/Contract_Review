@@ -111,7 +111,8 @@ def test_session_crud(client, auth_headers):
     assert r.status_code == 200
 
 
-def test_contract_type_crud(client):
+def test_contract_type_crud(client, admin_headers):
+    client.headers.update(admin_headers)
     r = client.post("/api/contract-types", json={"name": "服务类", "description": "服务合同"})
     assert r.status_code == 200
     type_id = r.json()["data"]["id"]
@@ -125,7 +126,8 @@ def test_contract_type_crud(client):
     assert r.json()["data"]["is_active"] == 0
 
 
-def test_model_config_crud(client):
+def test_model_config_crud(client, admin_headers):
+    client.headers.update(admin_headers)
     r = client.post(
         "/api/model-configs",
         json={
@@ -147,7 +149,8 @@ def test_model_config_crud(client):
     assert r.status_code == 200
 
 
-def test_dashboard(client):
+def test_dashboard(client, auth_headers):
+    client.headers.update(auth_headers)
     r = client.get("/api/dashboard/overview")
     assert r.status_code == 200
     assert "reviewed_contracts" in r.json()["data"]
