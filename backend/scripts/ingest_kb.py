@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import get_settings
 from app.core.qdrant import create_qdrant_client
+from app.core.runtime_config import runtime_job
 from app.rag.ingest.chunker import chunk_document
 from app.rag.ingest.corpus import load_corpus
 from app.rag.ingest.crawler import (
@@ -32,6 +33,7 @@ def _build_docs() -> list[dict]:
     return load_corpus(DATA_DIR)
 
 
+@runtime_job
 async def main() -> None:
     print("[ingest] 1/4 采集语料...")
     try:

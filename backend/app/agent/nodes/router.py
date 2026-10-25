@@ -6,23 +6,12 @@
 import json
 import re
 
+from app.agent.prompts import load_prompt
 from app.agent.state import RISK_DIM_KEYWORDS, RISK_DIMS, ReviewState
 from app.core.config import get_settings
 from app.rag.client import get_sf_client
 
 settings = get_settings()
-
-ROUTER_PROMPT = """你是合同审阅条款分发器。为下列合同条款分配审阅维度（可选维度）：
-{dims}
-
-规则：
-- 每条条款输出 1-2 个最相关维度；
-- 输出严格 JSON 数组：[{{"chunk_index": 0, "risk_dims": ["维度1"]}}]
-- 无法判断时 risk_dims 取 ["主体资格与合规"]。
-
-合同条款：
-{chunks}
-"""
 
 
 def _rule_route(chunk: str) -> list[str]:
@@ -36,7 +25,7 @@ def _rule_route(chunk: str) -> list[str]:
 
 async def _llm_route(chunks: list[str]) -> dict[int, list[str]] | None:
     try:
-        prompt = ROUTER_PROMPT.format(
+        prompt = load_prompt("router",
             dims="、".join(RISK_DIMS),
             chunks="\n".join(f"[{i}] {c[:200]}" for i, c in enumerate(chunks)),
         )
@@ -45,7 +34,7 @@ async def _llm_route(chunks: list[str]) -> dict[int, list[str]] | None:
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": "请分发以上条款。"},
             ],
-            model=settings.llm_intent_model,
+            model=settings.llm_intent_model, model_type="intent",
             temperature=0,
             max_tokens=2048,
         )

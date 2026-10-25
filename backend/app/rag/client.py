@@ -12,6 +12,8 @@ import httpx
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
 from app.core.config import get_settings
+from app.core.langfuse import observation, traced
+from app.core.runtime_config import credential, model_config
 
 settings = get_settings()
 
@@ -84,24 +86,70 @@ class LLMClient:
         }
         self._openai = AsyncOpenAI(
             base_url=self.base_url,
-            api_key=self.api_key,
+            api_key=self.api_key or "unconfigured",
             timeout=self.timeout,
             max_retries=1,
             http_client=DefaultAsyncHttpxClient(trust_env=settings.llm_http_trust_env),
         )
         self._embedding_openai = AsyncOpenAI(
             base_url=self.embedding_base_url,
-            api_key=self.embedding_api_key,
+            api_key=self.embedding_api_key or "unconfigured",
             timeout=self.timeout,
             max_retries=1,
             http_client=DefaultAsyncHttpxClient(trust_env=settings.llm_http_trust_env),
         )
         self._http: httpx.AsyncClient | None = None
+        self._providers: dict[tuple[str, str], Any] = {}
         # 应用层并发限流：所有 LLM 调用共享信号量，防止突发请求打满供应商推理队列
         self._sem = asyncio.Semaphore(settings.max_concurrent_llm)
         background_slots = max(1, settings.max_concurrent_llm - settings.llm_chat_reserved_slots)
         self._background_sem = asyncio.Semaphore(background_slots)
         self._prompt_cache = settings.llm_prompt_cache
+
+    def _provider(self, role: str):
+        config = model_config(role)
+        default = self._embedding_openai if role == "embedding" else self._openai
+        fallback_key = self.embedding_api_key if role == "embedding" else self.api_key
+        if not config:
+            if not fallback_key:
+                raise ValueError("Model credential is missing")
+            return default
+        fallback_url = self.embedding_base_url if role == "embedding" else self.base_url
+        endpoint = config["api_endpoint"] or fallback_url
+        key = credential(config["api_key"], fallback_key)
+        if not key:
+            raise ValueError("Configured model has no credential")
+        identity = (endpoint, key)
+        if identity not in self._providers:
+            self._providers[identity] = AsyncOpenAI(
+                base_url=endpoint, api_key=key, timeout=self.timeout, max_retries=1,
+                http_client=DefaultAsyncHttpxClient(trust_env=settings.llm_http_trust_env),
+            )
+        return self._providers[identity]
+
+    def _options(self, role: str, model: str, options: dict) -> tuple[str, dict]:
+        options = dict(options)
+        config = model_config(role)
+        if config:
+            model = config["model_name"]
+            if role not in {"embedding", "rerank"}:
+                options["temperature"] = config["temperature"]
+                options["top_p"] = config["top_p"]
+                options["max_tokens"] = min(options.get("max_tokens", config["max_tokens"]), config["max_tokens"])
+        if role not in {"embedding", "rerank"}:
+            model = self._checked_model(model)
+        return model, options
+
+    async def _complete(self, role: str, model: str, **options):
+        model, options = self._options(role, model, options)
+        with observation("llm.complete", as_type="generation", model=model) as span:
+            response = await self._provider(role).chat.completions.create(model=model, **options)
+            usage = getattr(response, "usage", None)
+            if usage:
+                span.update(usage_details={
+                    "input": usage.prompt_tokens, "output": usage.completion_tokens,
+                })
+            return response
 
     @asynccontextmanager
     async def _request_slot(self, *, interactive: bool = False):
@@ -117,15 +165,28 @@ class LLMClient:
     async def _stream(self, messages: list[dict], model: str, *, interactive: bool = False,
                       **kwargs: Any):
         async with self._request_slot(interactive=interactive):
-            stream = await self._openai.chat.completions.create(
-                model=model, messages=messages, stream=True, **self._apply_cache(kwargs),
-            )
-            try:
-                yield stream
-            finally:
-                close = getattr(stream, "close", None)
-                if close is not None:
-                    await close()
+            role = kwargs.pop("model_type", "chat")
+            model, options = self._options(role, model, self._apply_cache(kwargs))
+            with observation("llm.stream", as_type="generation", model=model) as span:
+                stream = await self._provider(role).chat.completions.create(
+                    model=model, messages=messages, stream=True, **options,
+                )
+                async def tracked():
+                    async for chunk in stream:
+                        usage = getattr(chunk, "usage", None)
+                        if usage:
+                            span.update(usage_details={"input": usage.prompt_tokens, "output": usage.completion_tokens})
+                        yield chunk
+
+                try:
+                    from contextlib import aclosing
+
+                    async with aclosing(tracked()) as source:
+                        yield source
+                finally:
+                    close = getattr(stream, "close", None)
+                    if close is not None:
+                        await close()
 
     def _apply_cache(self, kwargs: dict) -> dict:
         """SiliconFlow prompt cache：命中后显著降低 prefill 耗时（TTFT 优化）。
@@ -145,11 +206,13 @@ class LLMClient:
             raise ValueError(f"Inference model {model!r} is not in LLM_ALLOWED_MODELS")
         return model
 
-    def _task_options(self, kwargs: dict, brief: bool) -> dict:
+    def _task_options(self, kwargs: dict, brief: bool, role: str = "review") -> dict:
         """短结构化任务不应把输出预算全部消耗在 DeepSeek thinking 中。"""
         disable_thinking = settings.llm_brief_disable_thinking
         if disable_thinking is None:
-            disable_thinking = urlsplit(self.base_url).hostname == "api.deepseek.com"
+            config = model_config(role)
+            endpoint = config["api_endpoint"] if config else self.base_url
+            disable_thinking = urlsplit(endpoint).hostname == "api.deepseek.com"
         if brief and disable_thinking:
             extra = dict(kwargs.get("extra_body") or {})
             extra.setdefault("thinking", {"type": "disabled"})
@@ -176,6 +239,11 @@ class LLMClient:
         if self._http:
             await self._http.aclose()
             self._http = None
+        for provider in [self._openai, self._embedding_openai, *self._providers.values()]:
+            close = getattr(provider, "close", None)
+            if close:
+                await close()
+        self._providers.clear()
 
     # ---------- chat（OpenAI SDK） ----------
     async def chat(
@@ -187,14 +255,15 @@ class LLMClient:
         brief: bool = False,
         **kwargs: Any,
     ) -> str:
-        model = self._checked_model(model or settings.llm_review_model)
+        model = model or settings.llm_review_model
+        role = kwargs.pop("model_type", "review")
         async with self._request_slot():
-            resp = await self._openai.chat.completions.create(
-                model=model,
+            resp = await self._complete(
+                role, model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                **self._task_options(kwargs, brief),
+                **self._task_options(kwargs, brief, role),
             )
         return _final_content(resp.choices[0].message)
 
@@ -212,10 +281,11 @@ class LLMClient:
 
         调用方负责工具循环（见 app/agent/tools/executor.py）。
         """
-        model = self._checked_model(model or settings.llm_review_model)
+        model = model or settings.llm_review_model
+        role = kwargs.pop("model_type", "review")
         async with self._request_slot():
-            resp = await self._openai.chat.completions.create(
-                model=model,
+            resp = await self._complete(
+                role, model,
                 messages=messages,
                 tools=tools,
                 tool_choice=tool_choice,
@@ -242,11 +312,13 @@ class LLMClient:
         供应商不支持 strict json_schema 时回退普通 chat + 正则提取 JSON；
         解析失败返回 None，由调用方降级。
         """
-        model = self._checked_model(model or settings.llm_intent_model)
+        model = model or settings.llm_intent_model
+        role = kwargs.pop("model_type", "intent")
+        model, _ = self._options(role, model, {})
         try:
             async with self._request_slot():
-                resp = await self._openai.chat.completions.create(
-                    model=model,
+                resp = await self._complete(
+                    role, model,
                     messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
@@ -254,7 +326,7 @@ class LLMClient:
                         "type": "json_schema",
                         "json_schema": {"name": "structured_output", "strict": True, "schema": json_schema},
                     },
-                    **self._task_options(kwargs, brief),
+                    **self._task_options(kwargs, brief, role),
                 )
             content = _final_content(resp.choices[0].message)
             parsed = _extract_json(content)
@@ -267,7 +339,7 @@ class LLMClient:
         try:
             raw = await self.chat(
                 messages, model=model, temperature=temperature, max_tokens=max_tokens,
-                brief=brief, **kwargs,
+                brief=brief, model_type=role, **kwargs,
             )
             return _extract_json(raw)
         except Exception as exc:  # noqa: BLE001
@@ -285,7 +357,7 @@ class LLMClient:
 
         供非增量场景（gate/arbitration）复用流式通道，顺带统计 token。
         """
-        model = self._checked_model(model or settings.llm_chat_model)
+        model = model or settings.llm_chat_model
         full: list[str] = []
         usage: dict = {}
         kwargs.setdefault("stream_options", {"include_usage": True})
@@ -307,7 +379,7 @@ class LLMClient:
         调用方传 stream_options={"include_usage": True} 时，末尾会收到 usage chunk
         （无 content），由调用方统计；生成器本身只产出增量文本。
         """
-        model = self._checked_model(model or settings.llm_chat_model)
+        model = model or settings.llm_chat_model
         async with self._stream(messages, model, **kwargs) as stream:
             async for chunk in stream:
                 if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
@@ -320,7 +392,7 @@ class LLMClient:
 
         供需要 TTFT / token 统计的流式链路（chat_service）使用。
         """
-        model = self._checked_model(model or settings.llm_chat_model)
+        model = model or settings.llm_chat_model
         kwargs.setdefault("stream_options", {"include_usage": True})
         async with self._stream(messages, model, interactive=True, **kwargs) as stream:
             yield ("start", None)
@@ -347,10 +419,11 @@ class LLMClient:
                     yield ("activity", None)
 
     # ---------- embedding（OpenAI SDK） ----------
+    @traced("llm.embedding", as_type="embedding")
     async def embed(self, texts: list[str], model: str | None = None) -> list[list[float]]:
-        model = model or settings.embedding_model
+        model, _ = self._options("embedding", model or settings.embedding_model, {})
         async with self._request_slot():
-            resp = await self._embedding_openai.embeddings.create(
+            resp = await self._provider("embedding").embeddings.create(
                 model=model,
                 input=texts,
                 encoding_format="float",
@@ -360,6 +433,7 @@ class LLMClient:
         return [item.embedding for item in ordered]
 
     # ---------- rerank（供应商扩展接口） ----------
+    @traced("llm.rerank")
     async def rerank(
         self,
         query: str,
@@ -367,10 +441,16 @@ class LLMClient:
         model: str | None = None,
         top_n: int = 5,
     ) -> list[dict]:
-        model = model or settings.rerank_model
+        model, _ = self._options("rerank", model or settings.rerank_model, {})
+        config = model_config("rerank")
+        endpoint = config["api_endpoint"] if config else self.rerank_url
+        key = credential(config["api_key"], self.rerank_api_key) if config else self.rerank_api_key
+        if not key:
+            raise ValueError("Rerank credential is missing")
+        headers = {"Authorization": "Bearer " + key} if config else {}
         async with self._request_slot():
             resp = await self.http.post(
-                self.rerank_url,
+                endpoint, **({"headers": headers} if config else {}),
                 json={"model": model, "query": query, "documents": documents, "top_n": top_n},
             )
         resp.raise_for_status()

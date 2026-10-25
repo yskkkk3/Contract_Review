@@ -15,6 +15,7 @@ from qdrant_client import AsyncQdrantClient
 from app.agent.graph import build_graph
 from app.agent.state import ReviewState
 from app.core.config import get_settings
+from app.core.runtime_config import runtime_job
 from app.rag.ingest.chunker import chunk_document
 from app.rag.ingest.loader import ensure_collection, upsert_chunks
 from app.rag.retrievers.sparse_bm25 import BM25Index
@@ -45,6 +46,7 @@ SAMPLE_KB = [
 ]
 
 
+@runtime_job
 async def main() -> None:
     t0 = time.monotonic()
     print("[smoke] 1/5 构建本地知识库（Qdrant :memory: + BM25）")

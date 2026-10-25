@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 
 from app.core.db import get_db
+from app.core.runtime_config import runtime_dependency
 from app.core.security import get_current_user
 from app.core.storage import get_storage
 from app.models.comparison import ComparisonTask
@@ -26,7 +27,7 @@ from app.schemas.contract import (
 from app.services.contract_type_service import resolve_contract_type
 from app.services.document_parse import extract_contract_info, parse_document
 
-router = APIRouter(prefix="/contracts", tags=["contracts"])
+router = APIRouter(prefix="/contracts", tags=["contracts"], dependencies=[Depends(runtime_dependency)])
 
 ALLOWED_TYPES = {"pdf", "docx", "doc"}
 

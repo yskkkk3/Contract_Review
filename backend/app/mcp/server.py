@@ -1,14 +1,15 @@
-"""MCP Server：把本系统能力暴露为标准 MCP Tools（stdio / SSE 双传输）。
+"""MCP Server：把本系统能力暴露为标准 MCP Tools（stdio / Streamable HTTP 双传输）。
 
 启动：uv run python -m app.mcp.server            # stdio 模式
-挂载：app 内 /api/mcp/sse 提供 SSE transport（见 main.py）
+挂载：app 内 /api/mcp/ 提供 Streamable HTTP transport（见 main.py）
 """
 import json
 
+from app.agent.prompts import load_prompt
 from app.core.config import get_settings
+from app.core.runtime_config import runtime_job
 from app.rag.client import get_sf_client
 from app.rag.service import get_rag_service
-from app.services.chat_service import SYSTEM_TEMPLATE
 
 settings = get_settings()
 
@@ -19,6 +20,7 @@ def _build_server():
     mcp = MCPServer("contract-review", instructions="高校合同智能审阅 Agent 的 MCP 工具集")
 
     @mcp.tool()
+    @runtime_job
     async def search_knowledge_base(query: str, risk_dim: str = "") -> str:
         """检索合同审阅知识库（深大制度/法规/模板），返回 Top-3 证据文本。risk_dim 可选：主体资格与合规/财务与付款/知识产权与保密/违约责任与解除/验收交付与质保/争议解决与管辖。"""
         rag = get_rag_service()
@@ -30,14 +32,15 @@ def _build_server():
         )
 
     @mcp.tool()
+    @runtime_job
     async def ask_contract_assistant(question: str, contract_context: str = "") -> str:
         """围绕合同文本提问，返回 LLM 答案（无流式，供 MCP 客户端使用）。"""
         sf = get_sf_client()
         messages = [
-            {"role": "system", "content": SYSTEM_TEMPLATE + (f"\n【合同原文】\n{contract_context[:8000]}" if contract_context else "")},
+            {"role": "system", "content": load_prompt("chat") + (f"\n【合同原文】\n{contract_context[:8000]}" if contract_context else "")},
             {"role": "user", "content": question},
         ]
-        resp = await sf.chat(messages, model=settings.llm_chat_model, temperature=0.2, max_tokens=1024)
+        resp = await sf.chat(messages, model=settings.llm_chat_model, model_type="chat", temperature=0.2, max_tokens=1024)
         return resp
 
     @mcp.tool()
@@ -57,9 +60,27 @@ def run_stdio() -> None:
     _build_server().run(transport="stdio")
 
 
+_server = None
+
+
+def get_mcp_server():
+    global _server
+    if _server is None:
+        _server = _build_server()
+    return _server
+
+
 def get_fastmcp_app():
-    """SSE 传输：挂载到 FastAPI（/api/mcp/sse）。"""
-    return _build_server().streamable_http_app()
+    """Streamable HTTP 传输：挂载到 FastAPI（/api/mcp/）。"""
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    return get_mcp_server().streamable_http_app(
+        streamable_http_path="/", stateless_http=True, json_response=True,
+        transport_security=TransportSecuritySettings(
+            allowed_hosts=[host.strip() for host in settings.mcp_allowed_hosts.split(",") if host.strip()],
+            allowed_origins=[settings.frontend_url.rstrip("/")],
+        ),
+    )
 
 
 if __name__ == "__main__":

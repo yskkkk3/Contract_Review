@@ -1,5 +1,6 @@
 """FastAPI application entrypoint."""
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,7 +21,9 @@ from app.api import (
 from app.core.config import get_settings
 from app.core.db import Base, SessionLocal, engine
 from app.core.exceptions import register_exception_handlers
+from app.core.langfuse import shutdown_langfuse
 from app.core.redis import close_redis, init_redis
+from app.mcp.client import mcp_client_manager
 from app.middlewares.auth import AuthMiddleware
 from app.middlewares.logging import RequestLogMiddleware
 from app.middlewares.ratelimit import RateLimitMiddleware
@@ -36,8 +39,27 @@ async def lifespan(app: FastAPI):
         ensure_default_contract_types(db)
         db.commit()
     await init_redis()
-    yield
-    await close_redis()
+    try:
+        async with AsyncExitStack() as stack:
+            if settings.mcp_enabled:
+                from app.mcp.server import get_mcp_server
+
+                await stack.enter_async_context(get_mcp_server().session_manager.run())
+                await mcp_client_manager.connect_all()
+            yield
+    finally:
+        try:
+            await mcp_client_manager.close_all()
+            from app.rag import client as client_mod
+
+            if client_mod._llm_client is not None:
+                await client_mod._llm_client.aclose()
+                client_mod._llm_client = None
+        finally:
+            try:
+                await asyncio.to_thread(shutdown_langfuse)
+            finally:
+                await close_redis()
 
 
 app = FastAPI(

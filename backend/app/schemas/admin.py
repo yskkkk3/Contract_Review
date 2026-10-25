@@ -1,6 +1,8 @@
+import re
 from datetime import datetime
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ---------- contract type ----------
@@ -27,14 +29,21 @@ class PromptCreate(BaseModel):
     contract_type_id: int | None = None
     base_prompt_id: int | None = None
     organization_id: int | None = None
-    prompt_name: str
-    prompt_content: str
+    prompt_name: str = Field(..., min_length=1, max_length=128)
+    prompt_content: str = Field(..., min_length=1)
 
 
 class PromptUpdate(BaseModel):
     prompt_name: str | None = None
     prompt_content: str | None = None
-    is_active: int | None = None
+    is_active: int | None = Field(None, ge=0, le=1)
+
+    @field_validator("*")
+    @classmethod
+    def reject_null(cls, value):
+        if value is None:
+            raise ValueError("Prompt update fields cannot be null")
+        return value
 
 
 class PromptResponse(BaseModel):
@@ -50,24 +59,56 @@ class PromptResponse(BaseModel):
 
 # ---------- model config ----------
 class ModelConfigCreate(BaseModel):
-    model_name: str
+    model_name: str = Field(..., min_length=1, max_length=128)
     model_type: str = Field(..., pattern="^(review|chat|intent|embedding|rerank)$")
     provider: str = "siliconflow"
     api_endpoint: str = "https://api.siliconflow.cn/v1"
     api_key: str = ""
-    temperature: float = 0.7
-    top_p: float = 0.95
-    max_tokens: int = 4096
-    is_default: int = 0
+    temperature: float = Field(0.7, ge=0, le=2)
+    top_p: float = Field(0.95, gt=0, le=1)
+    max_tokens: int = Field(4096, ge=1, le=131072)
+    is_default: int = Field(0, ge=0, le=1)
+
+    @field_validator("api_key")
+    @classmethod
+    def env_reference(cls, value: str) -> str:
+        if value and not re.fullmatch(r"env:[A-Za-z_][A-Za-z0-9_]*", value):
+            raise ValueError("Use env:VARIABLE_NAME; plaintext credentials are not stored")
+        return value
+
+    @field_validator("api_endpoint")
+    @classmethod
+    def endpoint(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("A credential-free HTTP(S) endpoint is required")
+        return value
 
 
 class ModelConfigUpdate(BaseModel):
-    model_name: str | None = None
-    temperature: float | None = None
-    top_p: float | None = None
-    max_tokens: int | None = None
-    is_default: int | None = None
-    status: str | None = None
+    model_name: str | None = Field(None, min_length=1, max_length=128)
+    api_endpoint: str | None = None
+    api_key: str | None = None
+    temperature: float | None = Field(None, ge=0, le=2)
+    top_p: float | None = Field(None, gt=0, le=1)
+    max_tokens: int | None = Field(None, ge=1, le=131072)
+    is_default: int | None = Field(None, ge=0, le=1)
+    status: str | None = Field(None, pattern="^(active|inactive)$")
+
+    @field_validator("*")
+    @classmethod
+    def reject_null(cls, value):
+        if value is None:
+            raise ValueError("Model update fields cannot be null")
+        return value
+
+    @field_validator("api_key", "api_endpoint")
+    @classmethod
+    def validate_connection(cls, value: str | None, info):
+        if value is None:
+            raise ValueError("Connection fields cannot be null")
+        return (ModelConfigCreate.env_reference(value) if info.field_name == "api_key"
+                else ModelConfigCreate.endpoint(value))
 
 
 class ModelConfigResponse(BaseModel):

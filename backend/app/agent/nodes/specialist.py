@@ -239,7 +239,7 @@ async def _run_specialist(
                             "evidence_context": supplement.text, "draft": points,
                         }, ensure_ascii=False)},
                     ],
-                    json_schema=AUDIT_SCHEMA, model=settings.llm_review_model,
+                    json_schema=AUDIT_SCHEMA, model_type="review", model=settings.llm_review_model,
                     temperature=0, max_tokens=settings.agent_review_max_tokens,
                 ), timeout=settings.agent_evidence_audit_timeout)
                 if (isinstance(audit, dict) and audit.get("status") in {"complete", "revised", "incomplete"}

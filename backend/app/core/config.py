@@ -150,11 +150,13 @@ class Settings(BaseSettings):
     chat_stream_timeout: float = Field(default=30.0, gt=0)  # 上游无活动超时（含思考活动）
     chat_first_content_timeout: float = Field(default=120.0, gt=0)
     chat_heartbeat_interval: float = Field(default=10.0, gt=0)
-    review_stream_timeout: float = 120.0  # 审阅流式超时（秒）
 
     # MCP
     mcp_enabled: bool = False
     mcp_server_urls: str = ""
+    mcp_allowed_hosts: str = "localhost:*,127.0.0.1:*"
+    mcp_headers_env: str = ""  # environment variable containing JSON HTTP headers
+    mcp_tool_timeout: float = Field(default=30.0, gt=0)
 
     @property
     def mysql_dsn(self) -> str:

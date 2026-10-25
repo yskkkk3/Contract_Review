@@ -156,7 +156,7 @@ async def test_closing_response_closes_model_generator_and_records_cancellation(
     monkeypatch.setattr(chat_service, "_history_messages", history)
     db = SimpleNamespace(add=lambda *args: None, commit=lambda: None)
     response = await chat_service.stream_chat(SimpleNamespace(content="question", parent_id=None),
-                                              SimpleNamespace(id=1), None, db)
+                                              SimpleNamespace(id=1, file_id=None), None, db)
     body = response.body_iterator
     await anext(body)  # start, before waiting for the model
     assert "partial" in await anext(body)

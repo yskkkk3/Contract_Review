@@ -5,12 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session as DBSession
 
 from app.core.db import get_db
+from app.core.runtime_config import runtime_dependency
 from app.core.security import get_current_user
 from app.models.session_message import Session, SessionTypeEnum
 from app.models.user import User
 from app.schemas.chat import ChatRequest
 
-router = APIRouter(prefix="/chats", tags=["chats"])
+router = APIRouter(prefix="/chats", tags=["chats"], dependencies=[Depends(runtime_dependency)])
 
 
 @router.post("")

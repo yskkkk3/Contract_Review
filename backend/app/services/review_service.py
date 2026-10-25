@@ -13,7 +13,9 @@ from sqlalchemy.orm import Session as DBSession
 from app.agent.graph import get_graph
 from app.agent.state import ReviewState
 from app.core.cache import acquire_lock, release_lock, renew_lock
+from app.core.langfuse import traced
 from app.core.metrics import record as record_metric
+from app.core.runtime_config import prompt_scope
 from app.core.storage import get_storage
 from app.models.contract import ContractFile
 from app.models.review import ReviewResult, ReviewTask
@@ -91,6 +93,8 @@ async def stream_review_events(
         "summary": {},
         "errors": [],
     }
+
+    contract_type_id = contract.contract_type_id
 
     async def gen():
         # Redis 并发锁：同一会话只允许一个审阅任务（防止并发互删旧结果）
@@ -223,6 +227,15 @@ async def stream_review_events(
                 finally:
                     await release_lock(lock_key, lock_token)
 
-    return StreamingResponse(gen(), media_type="text/event-stream", headers={
+    @traced("review", session_id=request.session_id)
+    async def scoped_gen():
+        from contextlib import aclosing
+
+        with prompt_scope(contract_type_id):
+            async with aclosing(gen()) as source:
+                async for frame in source:
+                    yield frame
+
+    return StreamingResponse(scoped_gen(), media_type="text/event-stream", headers={
         "Cache-Control": "no-cache", "X-Accel-Buffering": "no",
     })

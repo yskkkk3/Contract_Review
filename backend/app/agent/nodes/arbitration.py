@@ -73,7 +73,7 @@ async def _llm_summary(points: list[dict], stance: str) -> dict:
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": json.dumps(points, ensure_ascii=False)},
             ],
-            json_schema=SUMMARY_SCHEMA,
+            model_type="review", json_schema=SUMMARY_SCHEMA,
             model=settings.llm_review_model,
             temperature=0.2,
             max_tokens=512,

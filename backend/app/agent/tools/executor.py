@@ -19,6 +19,7 @@ from typing import Any
 from app.agent.prompts import load_prompt
 from app.agent.tools.registry import Tool, ToolContext, tool_schemas
 from app.core.config import get_settings
+from app.core.langfuse import traced
 from app.rag.client import LLMClient, is_provider_access_error
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ class ToolCallRecord:
         }
 
 
+@traced("agent.tool", as_type="tool")
 async def _run_tool(
     tool_call: Any, tools: dict[str, Tool], ctx: ToolContext
 ) -> tuple[str, ToolCallRecord]:

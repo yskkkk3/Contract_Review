@@ -13,6 +13,7 @@ from collections import OrderedDict
 
 from app.agent.prompts import load_prompt
 from app.core.config import get_settings
+from app.core.runtime_config import model_config
 from app.rag.client import get_sf_client
 
 logger = logging.getLogger(__name__)
@@ -52,7 +53,9 @@ async def expand_query(query: str, variants: int | None = None) -> list[str]:
     if variants <= 1 or not query.strip():
         return [query]
 
-    cache_key = f"{variants}:{query}"
+    prompt = load_prompt("rag_query_expansion", n=variants - 1)
+    config = model_config("intent")
+    cache_key = f"{variants}:{config}:{prompt}:{query}"
     cached = _cache.get(cache_key)
     if cached is not None:
         return cached
@@ -61,10 +64,11 @@ async def expand_query(query: str, variants: int | None = None) -> list[str]:
         sf = get_sf_client()
         raw = await asyncio.wait_for(sf.chat(
             messages=[
-                {"role": "system", "content": load_prompt("rag_query_expansion", n=variants - 1)},
+                {"role": "system", "content": prompt},
                 {"role": "user", "content": query},
             ],
             model=settings.llm_intent_model,  # 轻量模型即可
+            model_type="intent",
             temperature=0.2,
             max_tokens=512,
             brief=True,

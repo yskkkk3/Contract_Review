@@ -132,6 +132,8 @@ _TEMPLATE_PARAMS: dict = {
 
 def default_tools() -> list[Tool]:
     """默认工具集：Agent 审阅时可调用的全部工具。"""
+    from app.mcp.client import mcp_client_manager
+
     return [
         Tool(
             name="search_regulations",
@@ -157,6 +159,7 @@ def default_tools() -> list[Tool]:
             parameters=_TEMPLATE_PARAMS,
             handler=_lookup_template,
         ),
+        *mcp_client_manager.agent_tools(),
     ]
 
 

@@ -60,7 +60,7 @@ async def _llm_check(
                     "accepted_risk_points": accepted_points or [],
                 }, ensure_ascii=False)},
             ],
-            json_schema=GATE_SCHEMA,
+            model_type="review", json_schema=GATE_SCHEMA,
             model=settings.llm_review_model,
             temperature=0,
             max_tokens=256,

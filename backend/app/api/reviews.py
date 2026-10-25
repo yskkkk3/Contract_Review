@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session as DBSession
 
 from app.core.db import get_db
+from app.core.runtime_config import runtime_dependency
 from app.core.security import get_current_user
 from app.models.contract import ContractFile
 from app.models.review import ReviewResult, ReviewTask
@@ -10,7 +11,7 @@ from app.models.user import User
 from app.schemas.base import GenericResponse
 from app.schemas.review import AcceptContractFileRequest, AcceptRiskPointRequest, ReviewStartRequest
 
-router = APIRouter(prefix="/reviews", tags=["reviews"])
+router = APIRouter(prefix="/reviews", tags=["reviews"], dependencies=[Depends(runtime_dependency)])
 
 
 @router.post("/start")

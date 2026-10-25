@@ -15,6 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.core.runtime_config import runtime_job
 from app.rag.client import provider_error_code, provider_status_code
 from app.rag.eval.golden_set import GOLDEN_SET
 from app.rag.eval.retrieval_metrics import evaluate_retrieval
@@ -26,6 +27,7 @@ def _matches(case_relevant: list[str], chunk_source: str, chunk_doc_id: str) -> 
     return any(kw in chunk_doc_id or kw in chunk_source for kw in case_relevant)
 
 
+@runtime_job
 async def run(
     recall5: float, mrr: float, ndcg: float, concurrency: int = 2, output: Path | None = None,
 ) -> int:

@@ -1,4 +1,4 @@
-import { del, get, post } from './http'
+import { del, get, post, put } from './http'
 import type { ContractType, DashboardOverview, DepartmentUsage, ModelConfig, PromptTemplate, TrendPoint } from '@/types/api'
 
 export const dashboardApi = {
@@ -32,7 +32,21 @@ export const adminApi = {
   deleteModelConfig(id: number) {
     return del<boolean>(`/model-configs/${id}`)
   },
+  updateModelConfig(id: number, data: Partial<ModelConfig>) {
+    return put<ModelConfig>(`/model-configs/${id}`, data)
+  },
   prompts() {
     return get<PromptTemplate[]>('/prompts')
+  },
+  promptTemplates() {
+    return get<{ name: string; content: string }[]>('/prompt-templates')
+  },
+  savePrompt(data: Partial<PromptTemplate>) {
+    return data.id ? put<PromptTemplate>(`/prompts/${data.id}`, {
+      prompt_content: data.prompt_content, is_active: data.is_active,
+    }) : post<PromptTemplate>('/prompts', data)
+  },
+  deletePrompt(id: number) {
+    return del<null>(`/prompts/${id}`)
   },
 }

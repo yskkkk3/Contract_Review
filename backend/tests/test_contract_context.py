@@ -119,7 +119,7 @@ async def test_contract_read_does_not_block_event_loop(monkeypatch):
 
     monkeypatch.setattr(chat_service, "_load_contract_text", load)
     task = asyncio.create_task(chat_service.stream_chat(
-        SimpleNamespace(content="test", parent_id=None), SimpleNamespace(id=1), None, DB(),
+        SimpleNamespace(content="test", parent_id=None), SimpleNamespace(id=1, file_id=None), None, DB(),
     ))
     try:
         assert await asyncio.to_thread(entered.wait, 2)

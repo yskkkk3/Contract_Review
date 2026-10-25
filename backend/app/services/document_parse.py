@@ -19,6 +19,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from app.agent.prompts import load_prompt
 from app.core.config import get_settings
 
 logger = logging.getLogger("document.parse")
@@ -34,10 +35,6 @@ def _read_text_file(path: str | Path) -> str:
         except UnicodeDecodeError:
             continue
     return data.decode("utf-8", errors="replace")
-
-EXTRACT_SYSTEM_PROMPT = """你是合同信息抽取助手。从合同文本中抽取甲乙方与金额，严格输出 JSON：
-{"party_a": "甲方名称", "party_b": "乙方名称", "amount": "数字字符串或空"}
-规则：只抽取文本中明确出现的名称与金额；无法识别时输出空字符串；不要编造。"""
 
 
 def _clean(text: str) -> str:
@@ -251,9 +248,9 @@ async def extract_contract_meta(text: str) -> dict:
 
     try:
         sf = get_sf_client()
-        raw = await sf.chat(messages=[{"role": "system", "content": EXTRACT_SYSTEM_PROMPT},
+        raw = await sf.chat(messages=[{"role": "system", "content": load_prompt("contract_extract")},
                                       {"role": "user", "content": text[:6000]}],
-                            model=settings.llm_chat_model, temperature=0, max_tokens=256)
+                            model=settings.llm_chat_model, model_type="chat", temperature=0, max_tokens=256)
         data = json.loads(raw)
         return {"party_a": data.get("party_a", ""), "party_b": data.get("party_b", ""), "amount": data.get("amount", "")}
     except Exception:  # noqa: BLE001

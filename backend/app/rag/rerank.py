@@ -89,7 +89,7 @@ async def rerank_evidence(
                         {"question": query, "documents": documents}, ensure_ascii=False,
                     )},
                 ],
-                model=settings.llm_intent_model, temperature=0, max_tokens=1024, brief=True,
+                model=settings.llm_intent_model, model_type="intent", temperature=0, max_tokens=1024, brief=True,
                 response_format={"type": "json_object"},
             ),
             timeout=settings.rag_evidence_rerank_timeout,

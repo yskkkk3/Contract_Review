@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from app.agent.prompts import load_prompt
 from app.core.config import get_settings
+from app.core.langfuse import traced
 from app.core.metrics import record
 from app.models.session_message import Message, Session
 from app.models.user import User
@@ -24,7 +25,6 @@ from app.services.contract_context import contract_text_cache
 
 settings = get_settings()
 
-SYSTEM_TEMPLATE = load_prompt("chat")
 logger = logging.getLogger(__name__)
 
 
@@ -109,6 +109,10 @@ async def stream_chat(
     started_at = started_at if started_at is not None else time.monotonic()
     # ORM objects expire on commit; do not reopen a DB transaction while streaming.
     session_id = session.id
+    from app.models.contract import ContractFile
+
+    contract = db.get(ContractFile, session.file_id) if session.file_id else None
+    contract_type_id = contract.contract_type_id if contract else None
     phases: dict[str, float] = {}
 
     def elapsed(start: float) -> float:
@@ -140,13 +144,14 @@ async def stream_chat(
                status="cancelled" if isinstance(exc, asyncio.CancelledError) else "error")
         raise
 
-    system = SYSTEM_TEMPLATE
+    system = load_prompt("chat", contract_type_id=contract_type_id)
     if contract_text:
         system += f"\n\n合同原文（节选）：\n{contract_text}"
 
     full_content: list[str] = []
     usage: dict = {}
 
+    @traced("chat", session_id=session_id)
     async def gen():
         model_started = time.monotonic()
         ttft_ms: float | None = None

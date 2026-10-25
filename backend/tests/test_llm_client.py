@@ -28,6 +28,8 @@ def fake_openai(monkeypatch):
     """CI 无 .env：mock AsyncOpenAI 构造，避免 openai SDK 强制校验 API key。"""
 
     monkeypatch.setattr(client_mod.settings, "llm_allowed_models", "")
+    monkeypatch.setattr(client_mod.settings, "llm_api_key", "test-credential")
+    monkeypatch.setattr(client_mod.settings, "embedding_api_key", "test-embedding-credential")
     monkeypatch.setattr(client_mod.settings, "llm_brief_reasoning_effort", None)
 
     class _FakeCompletions:

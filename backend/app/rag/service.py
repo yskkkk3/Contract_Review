@@ -5,6 +5,7 @@ from pathlib import Path
 from qdrant_client import AsyncQdrantClient
 
 from app.core.config import get_settings
+from app.core.langfuse import traced
 from app.core.qdrant import create_qdrant_client
 from app.rag.client import get_sf_client
 from app.rag.ingest.loader import ensure_collection
@@ -72,6 +73,7 @@ class RAGService:
         }:
             await ensure_collection(self.qdrant, collection, vector_size)
 
+    @traced("rag.search", as_type="retriever")
     async def search(
         self,
         query: str,
