@@ -5,7 +5,7 @@
 # ============================================================
 
 # ---------- 变量 ----------
-COMPOSE  := docker compose -f deploy/docker-compose.yml
+COMPOSE  := docker compose --env-file .env -f deploy/docker-compose.yml
 
 # ---------- 通用 ----------
 .PHONY: help

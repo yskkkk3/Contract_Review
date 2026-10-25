@@ -8,7 +8,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
@@ -59,6 +59,8 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - run: npm test
       - run: npm run build
 
   docker-build:
@@ -70,21 +72,40 @@ jobs:
         run: docker build -t contract-review-backend:ci ./backend
       - name: Build frontend image
         run: docker build -t contract-review-frontend:ci ./frontend
+      - name: Validate deployment configuration
+        run: |
+          touch .env
+          docker compose --env-file .env -f deploy/docker-compose.yml config --quiet
+          docker compose --env-file .env -f deploy/docker-compose.yml --profile observability config --quiet
+          bash -n deploy/ship-release.sh
+          bash -n deploy/remote-release.sh
 
   deploy:
-    name: Deploy (placeholder)
+    name: Deploy to Linux host
     runs-on: ubuntu-latest
-    needs: [lint, test, frontend-build, docker-build]
-    if: github.ref == 'refs/heads/main'
+    needs: [lint, test, frontend-build, docker-build, rag-eval]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    environment: production
+    timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: Deploy hook (customize for your server)
-        run: |
-          echo "::notice::Deploy step is a placeholder. Connect SSH/webhook or registry push here."
+      - name: Ship verified source and deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          DEPLOY_PROJECT: ${{ vars.DEPLOY_PROJECT || 'deploy' }}
+        run: bash deploy/ship-release.sh
 
   rag-eval:
     name: RAG Eval Gate (golden set)
     runs-on: ubuntu-latest
+    env:
+      SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
     services:
       qdrant:
         image: qdrant/qdrant:v1.13.4
@@ -104,11 +125,19 @@ jobs:
       - name: Full retrieval eval + metric gate (requires SILICONFLOW_API_KEY secret)
         if: env.SILICONFLOW_API_KEY != ''
         env:
-          SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
+          LLM_BASE_URL: https://api.siliconflow.cn/v1
+          LLM_REVIEW_MODEL: ${{ vars.RAG_EVAL_LLM_MODEL || 'deepseek-ai/DeepSeek-V3.2' }}
+          LLM_CHAT_MODEL: ${{ vars.RAG_EVAL_LLM_MODEL || 'deepseek-ai/DeepSeek-V3.2' }}
+          LLM_INTENT_MODEL: ${{ vars.RAG_EVAL_LLM_MODEL || 'deepseek-ai/DeepSeek-V3.2' }}
+          EMBEDDING_BASE_URL: https://api.siliconflow.cn/v1
+          EMBEDDING_MODEL: BAAI/bge-m3
+          RERANK_URL: https://api.siliconflow.cn/v1/rerank
+          RERANK_MODEL: BAAI/bge-reranker-v2-m3
           QDRANT_HOST: localhost
           QDRANT_PORT: "6333"
           DATABASE_URL: sqlite://
           JWT_SECRET_KEY: ci-secret-0123456789abcdef
+          OSS_BUCKET_DIR: /tmp/cr-parsed
         run: |
           uv run python scripts/ingest_kb.py
           uv run python scripts/eval_rag.py | tee /tmp/eval.out

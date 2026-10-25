@@ -14,24 +14,24 @@
 ## 2. 快速启动（Docker 一键）
 
 ```bash
-# 1) 克隆并配置密钥（SiliconFlow API key 必填）
+# 1) 克隆并按 .env.example 配置推理、向量和精排密钥
 git clone git@github.com:yskkkk3/Contract_Review.git
 cd contract-review
 cp backend/.env.example .env
-vim .env                      # 填入 SILICONFLOW_API_KEY=sk-xxx
+vim .env                      # 密钥只保存在本地 .env
 
-# 2) 构建并启动六服务（mysql/redis/qdrant/langfuse/backend/frontend）
+# 2) 构建并启动核心服务（mysql/redis/qdrant/backend/frontend）
 #    .env 必须位于项目根目录（compose 通过 env_file: ../.env 注入 backend 容器）
-docker compose -f deploy/docker-compose.yml up -d --build
+docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
 
 # 3) 等待健康检查通过后，构建知识库（深大制度 + 法规 + 模板）
-docker compose -f deploy/docker-compose.yml exec backend python scripts/ingest_kb.py
+docker compose --env-file .env -f deploy/docker-compose.yml exec backend python scripts/ingest_kb.py
 
 # 4) 打开前端
 open http://localhost            # 注册账号 → 上传合同 → 发起审阅
 ```
 
-> 服务端口：前端 `http://localhost`，后端 API `http://localhost:8080/api`，Langfuse `http://localhost:3000`，Qdrant `http://localhost:6333`。
+> 服务端口：前端 `http://localhost`，后端 API `http://localhost:8080/api`，可选 Langfuse `http://localhost:13000`；Qdrant 在容器网络内访问。
 
 > **`.env` 位置约定**：统一放**项目根目录**（`cp backend/.env.example .env`）。
 > - Docker：`deploy/docker-compose.yml` 通过 `env_file: ../.env` 注入 backend 容器；
@@ -116,7 +116,7 @@ locust -f scripts/bench_locust.py --host http://localhost:8080 \
 ## 5.5 文档解析与 MCP
 
 - **多引擎解析**：默认回退链 `pdfplumber→pymupdf→pypdf→docx→libreoffice→ocr`；本地 OCR 需要 poppler 与 tesseract。可选 `cloud_ocr` 使用百炼 `qwen3.5-ocr`，默认复用 Embedding Key；启用后扫描页会发送到百炼。复杂版面可选 `uv sync --extra heavy-doc`（docling/mineru）。
-- **MCP Server**：`uv run python -m app.mcp.server`（stdio，供 Claude/Cursor 等客户端）；或 `.env` 设 `MCP_ENABLED=true` 后经 `/api/mcp`（streamable-http）接入；工具：search_knowledge_base / ask_contract_assistant / health_check。
+- **MCP Server**：`uv run python -m app.mcp.server`（stdio，供 Claude/Cursor 等客户端）；或 `.env` 设 `MCP_ENABLED=true` 后经 `/api/mcp/`（Streamable HTTP，需有效 Bearer token）接入；工具：search_knowledge_base / ask_contract_assistant / health_check。
 - **规则引擎 Skills**：`app/skills/rules.py` 提供 6 维度 8 条确定性规则（预付款>30%、违约金基数、验收标准等），输出与 LLM 专家同构，可并入审阅。
 
 ## 6. 常见问题
@@ -134,7 +134,7 @@ locust -f scripts/bench_locust.py --host http://localhost:8080 \
 推送 `main` 自动触发 5 个 Job：
 
 ```
-lint (ruff) → test (pytest) → frontend-build (vue-tsc + vite) → docker-build → deploy (占位)
+lint (ruff) / test (pytest) / frontend-build (lint + test + vue-tsc + vite) / docker-build / rag-eval → deploy（显式启用后）
 ```
 
 本地等价复现：
@@ -143,3 +143,5 @@ lint (ruff) → test (pytest) → frontend-build (vue-tsc + vite) → docker-bui
 cd backend && uv sync --frozen && uv run pytest tests/ -q && uv run ruff check app/ tests/ scripts/
 cd frontend && npm ci && npm run build
 ```
+
+运行时模型/提示词配置、Langfuse v4、外部 MCP 和 SSH 部署设置见 [运行时配置与集成](runtime-integrations.md)。

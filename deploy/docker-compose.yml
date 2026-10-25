@@ -1,4 +1,4 @@
-# 高校合同智能审阅系统 · Docker Compose（六服务）
+# 合同智能审阅系统 · 核心服务 + 可选 Langfuse v4 observability profile
 # 用法: docker compose -f deploy/docker-compose.yml up -d --build
 # 首次启动后执行知识库构建: docker compose exec backend python scripts/ingest_kb.py
 services:
@@ -42,41 +42,118 @@ services:
       timeout: 5s
       retries: 10
 
+  # Optional Langfuse v4 stack. Existing v2 database volume is retained separately.
   langfuse-db:
     image: postgres:16-alpine
-    container_name: cr-langfuse-db
+    profiles: [observability]
     environment:
       POSTGRES_USER: langfuse
-      POSTGRES_PASSWORD: change-me-langfuse-db
+      POSTGRES_PASSWORD: ${LF_POSTGRES_PASSWORD:-change-me-langfuse-db}
       POSTGRES_DB: langfuse
     volumes:
-      - cr_langfuse_db:/var/lib/postgresql/data
+      - cr_langfuse_v4_db:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
 
-  langfuse:
-    image: langfuse/langfuse:2
-    container_name: cr-langfuse
+  langfuse-clickhouse:
+    image: clickhouse/clickhouse-server:25.12
+    profiles: [observability]
     environment:
-      DATABASE_URL: postgresql://langfuse:change-me-langfuse-db@langfuse-db:5432/langfuse
-      HOSTNAME: 0.0.0.0
-      NEXTAUTH_URL: http://localhost:13000
-      NEXTAUTH_SECRET: change-me-nextauth-secret
-      SALT: change-me-salt
-      ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-    ports:
-      - "13000:3000"
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: ${LF_CLICKHOUSE_PASSWORD:-change-me-clickhouse}
+    volumes:
+      - cr_langfuse_clickhouse:/var/lib/clickhouse
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/public/health"]
-      interval: 15s
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 5s
       timeout: 5s
-      retries: 10
-    depends_on:
+      retries: 20
+
+  langfuse-minio:
+    image: cgr.dev/chainguard/minio
+    profiles: [observability]
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" /data'
+    environment:
+      MINIO_ROOT_USER: langfuse
+      MINIO_ROOT_PASSWORD: ${LF_MINIO_PASSWORD:-change-me-minio-password}
+    volumes:
+      - cr_langfuse_minio:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  langfuse-redis:
+    image: redis:7-alpine
+    profiles: [observability]
+    command: redis-server --appendonly yes --maxmemory-policy noeviction
+    volumes:
+      - cr_langfuse_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  langfuse-worker:
+    image: docker.langfuse.com/langfuse/langfuse-worker:4
+    profiles: [observability]
+    environment: &langfuse-environment
+      DATABASE_URL: postgresql://langfuse:${LF_POSTGRES_PASSWORD:-change-me-langfuse-db}@langfuse-db:5432/langfuse
+      NEXTAUTH_URL: ${LF_PUBLIC_URL:-http://localhost:13000}
+      SALT: ${LF_SALT:-change-me-salt}
+      ENCRYPTION_KEY: ${LF_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: ${LF_CLICKHOUSE_PASSWORD:-change-me-clickhouse}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: 6379
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LF_MINIO_PASSWORD:-change-me-minio-password}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LF_MINIO_PASSWORD:-change-me-minio-password}
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+    depends_on: &langfuse-dependencies
       langfuse-db:
         condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+
+  langfuse:
+    image: docker.langfuse.com/langfuse/langfuse:4
+    profiles: [observability]
+    environment:
+      <<: *langfuse-environment
+      HOSTNAME: 0.0.0.0
+      NEXTAUTH_SECRET: ${LF_NEXTAUTH_SECRET:-change-me-nextauth-secret}
+    ports:
+      - "13000:3000"
+    depends_on: *langfuse-dependencies
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/public/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
 
   backend:
     build:
@@ -101,7 +178,6 @@ services:
       # These credentials come from env_file above.  Do not redeclare them
       # with ${...:-}: Compose interpolation happens before env_file is read,
       # so an unset shell variable would overwrite the value with an empty one.
-      LANGFUSE_HOST: http://langfuse:3000
       FRONTEND_URL: http://localhost:80
       UPLOAD_DIR: /data/uploads
       OSS_BUCKET_DIR: /data/parsed
@@ -113,8 +189,6 @@ services:
       redis:
         condition: service_healthy
       qdrant:
-        condition: service_healthy
-      langfuse:
         condition: service_healthy
     ports:
       - "8080:8080"
@@ -143,5 +217,9 @@ volumes:
   cr_mysql:
   cr_redis:
   cr_qdrant:
-  cr_langfuse_db:
+  cr_langfuse_db:  # retained legacy v2 data; no automatic migration
+  cr_langfuse_v4_db:
+  cr_langfuse_clickhouse:
+  cr_langfuse_minio:
+  cr_langfuse_redis:
   cr_parsed:
