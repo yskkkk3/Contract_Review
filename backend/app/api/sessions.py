@@ -7,7 +7,7 @@ from app.core.security import get_current_user
 from app.models import Message, ReviewResult, Session, SessionTypeEnum
 from app.models.comparison import ComparisonTask
 from app.models.contract import ContractFile
-from app.models.review import ReviewTask
+from app.models.review import ReviewJob, ReviewTask
 from app.models.user import User
 from app.schemas.base import GenericResponse, PageResponse
 from app.schemas.comparison import ComparisonResponse, DiffSummary, FileInfo, ParagraphDiff
@@ -88,8 +88,16 @@ async def delete_session(
     session = db.get(Session, session_id)
     if session is None or session.user_id != current_user.id:
         raise HTTPException(404, "Session not found")
-    if db.query(ReviewTask).filter_by(session_id=session_id, status="processing").first():
+    from app.services.review_jobs import reconcile
+
+    for job in db.query(ReviewJob).filter_by(session_id=session_id):
+        await reconcile(job, db)
+    if (db.query(ReviewTask).filter_by(session_id=session_id, status="processing").first()
+            or db.query(ReviewJob).filter(
+                ReviewJob.session_id == session_id, ReviewJob.status.in_(("processing", "cancelling")),
+            ).first()):
         raise HTTPException(409, "Review is still running")
+    db.query(ReviewJob).filter_by(session_id=session_id).delete()
     db.query(ReviewResult).filter_by(session_id=session_id).delete()
     db.query(ReviewTask).filter_by(session_id=session_id).delete()
     db.query(ComparisonTask).filter_by(session_id=session_id).delete()

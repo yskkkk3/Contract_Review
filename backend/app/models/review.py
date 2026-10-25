@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -18,7 +18,7 @@ class ReviewTask(Base):
     intensity: Mapped[str] = mapped_column(String(16), default="标准")  # 严格 | 标准 | 宽松
     description: Mapped[str] = mapped_column(Text, default="")
     contract_type: Mapped[str] = mapped_column(String(64), default="")
-    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending|processing|completed|failed
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending|processing|completed|failed|cancelled
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -39,3 +39,18 @@ class ReviewResult(Base):
     risk_dim: Mapped[str] = mapped_column(String(32), default="")  # 风险维度
     is_accepted: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class ReviewJob(Base):
+    """Durable background progress; independent of the lifetime of an HTTP connection."""
+
+    __tablename__ = "review_jobs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("sessions.id"), index=True)
+    file_id: Mapped[int] = mapped_column(ForeignKey("contract_files.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="processing", index=True)
+    snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

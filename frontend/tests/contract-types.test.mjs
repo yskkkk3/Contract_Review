@@ -10,7 +10,7 @@ test('contract management exposes a persisted manual type selector', async () =>
 })
 
 test('review persists the selected contract type before starting', async () => {
-  const source = await readFile(new URL('../src/views/ReviewView.vue', import.meta.url), 'utf8')
+  const source = await readFile(new URL('../src/stores/review.ts', import.meta.url), 'utf8')
   assert.match(source, /await api\.setType\(selectedFile\.id, selectedType\.id/)
   assert.match(source, /selectedFile\.contract_type_id = selectedType\.id/)
 })

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElDrawer } from 'element-plus'
+import { ElDrawer, ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
+import { useReviewStore } from '@/stores/review'
 import AppContainer from '@/components/ui/AppContainer.vue'
 import AppTypography from '@/components/ui/AppTypography.vue'
 import AppNavbar from '@/components/layout/AppNavbar.vue'
@@ -14,6 +15,18 @@ import { APP_NAVIGATION } from '@/components/layout/navigation'
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const review = useReviewStore()
+watch(() => auth.user?.id ?? null, (id) => { void review.connect(id) }, { immediate: true, flush: 'sync' })
+watch(() => review.jobs.map(({ id, status }) => ({ id, status })), (jobs, previous) => {
+  if (route.name === 'review') return
+  for (const job of jobs) {
+    const before = previous?.find((item) => item.id === job.id)
+    if (!before || !['processing', 'cancelling'].includes(before.status)) continue
+    if (job.status === 'completed') ElMessage.success('后台审阅已完成，可返回智能审阅查看结果')
+    if (job.status === 'failed') ElMessage.warning('后台审阅未完成，请返回智能审阅查看详情')
+    if (job.status === 'cancelled') ElMessage.info('后台审阅已停止')
+  }
+})
 const mainRef = ref<HTMLElement>()
 const mobileNavigationOpen = ref(false)
 const scrolled = ref(false)
@@ -66,6 +79,11 @@ function onScroll() {
           <div><AppTypography class="workspace-eyebrow" variant="eyebrow" tone="muted">Contract Review Agent</AppTypography><AppTypography id="workspace-title" as="h1" variant="section">{{ title }}</AppTypography><AppTypography class="workspace-description" variant="small" tone="secondary">高校采购合同智能审阅 Agent</AppTypography></div>
           <span class="workspace-context-label">采购合同管理场景</span>
         </header>
+        <el-alert v-for="job in review.activeJobs" :key="job.id" type="info" :closable="false" style="margin-bottom: 12px" show-icon>
+          <template #title>{{ job.title }} · {{ job.status === 'cancelling' ? '正在停止审阅' : '正在后台审阅，可以继续使用其他功能' }}</template>
+          <el-button size="small" @click="review.select(job.id); router.push({ name: 'review' })">查看进度</el-button>
+          <el-button size="small" type="danger" plain :disabled="job.status === 'cancelling'" :loading="review.stopping" @click="review.stop(job.id)">停止审阅</el-button>
+        </el-alert>
         <div class="workspace-stage"><router-view /></div>
         <AppFooter />
       </AppContainer>

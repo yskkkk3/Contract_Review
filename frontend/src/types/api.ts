@@ -84,6 +84,48 @@ export interface ReviewSummary {
   }
 }
 
+export interface ReviewJob {
+  id: string
+  session_id: number
+  file_id: number
+  task_id?: number
+  title: string
+  stance: '甲方' | '乙方'
+  intensity: '严格' | '标准' | '宽松'
+  description: string
+  contract_type: string
+  status: 'pending' | 'processing' | 'cancelling' | 'completed' | 'cancelled' | 'failed'
+  risk_points: (RiskPoint & { is_accepted?: number })[]
+  summary: ReviewSummary | null
+  chunk_count: number
+  error: string
+  created_at: string
+}
+
+export interface ReviewHistoryItem {
+  id: string
+  session_id: number
+  file_id: number
+  title: string
+  status: ReviewJob['status'] | 'pending'
+  stance: ReviewJob['stance']
+  intensity: ReviewJob['intensity']
+  contract_type: string
+  created_at: string
+  completed_at: string | null
+  risk_point_count: number | null
+  overall_risk: ReviewSummary['overall_risk'] | null
+  review_status: ReviewSummary['review_status'] | null
+  can_repeat: boolean
+}
+
+export interface ReviewHistoryDetail extends Omit<ReviewJob, 'status'> {
+  status: ReviewHistoryItem['status']
+  completed_at: string | null
+  notice: string
+  can_repeat: boolean
+}
+
 export type ReviewEvent =
   | { event: 'meta'; data: { task_id: number; session_id: number; chunk_count: number } }
   | { event: 'message'; data: RiskPoint }
@@ -171,6 +213,7 @@ export interface ModelConfig {
   model_type: string
   provider: string
   api_endpoint: string
+  api_key?: string
   temperature: number
   top_p: number
   max_tokens: number

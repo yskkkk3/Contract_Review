@@ -129,8 +129,9 @@
       <el-table-column label="上传时间" width="170">
         <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="90" fixed="right">
+      <el-table-column label="操作" width="175" fixed="right">
         <template #default="{ row }">
+          <el-button link type="primary" @click="router.push({ name: 'review-history', query: { file_id: row.id } })">审阅记录</el-button>
           <el-button link type="danger" @click="onDelete(row)">删除</el-button>
         </template>
       </el-table-column>
@@ -150,11 +151,13 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type UploadFile } from 'element-plus'
 import { api } from '@/api/contract'
 import { adminApi } from '@/api/dashboard'
 import type { ContractFile, ContractType } from '@/types/api'
 
+const router = useRouter()
 const files = ref<ContractFile[]>([])
 const types = ref<ContractType[]>([])
 const loading = ref(false)

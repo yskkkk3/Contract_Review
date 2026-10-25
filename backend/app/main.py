@@ -28,6 +28,7 @@ from app.middlewares.auth import AuthMiddleware
 from app.middlewares.logging import RequestLogMiddleware
 from app.middlewares.ratelimit import RateLimitMiddleware
 from app.services.contract_type_service import ensure_default_contract_types
+from app.services.review_jobs import shutdown_review_jobs
 
 settings = get_settings()
 
@@ -49,6 +50,7 @@ async def lifespan(app: FastAPI):
             yield
     finally:
         try:
+            await shutdown_review_jobs()
             await mcp_client_manager.close_all()
             from app.rag import client as client_mod
 

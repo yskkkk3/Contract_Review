@@ -2,12 +2,13 @@
   <el-row :gutter="16">
     <el-col :span="8">
       <el-card shadow="hover">
-        <template #header>选择合同并发起审阅</template>
-        <el-select v-model="fileId" placeholder="选择已解析合同" style="width: 100%" @change="onFileChange">
+        <template #header><div class="head"><span>选择合同并发起审阅</span><el-button link type="primary" @click="router.push({ name: 'review-history' })">审阅历史</el-button></div></template>
+        <el-alert v-if="historyLoading" title="正在载入历史审阅配置…" type="info" :closable="false" />
+        <el-select v-model="fileId" :disabled="running || historyLoading" placeholder="选择已解析合同" style="width: 100%" @change="onFileChange">
           <el-option v-for="f in files" :key="f.id" :label="contractLabel(f)" :value="f.id" />
         </el-select>
         <el-divider />
-        <el-form label-width="90px">
+        <el-form label-width="90px" :disabled="running || historyLoading">
           <el-form-item label="合同类型">
             <el-select v-model="contractType" placeholder="合同类型" style="width: 100%">
               <el-option v-for="t in types" :key="t.id" :label="t.name" :value="t.name" />
@@ -29,24 +30,32 @@
           <el-form-item label="审阅说明">
             <el-input v-model="description" type="textarea" :rows="3" placeholder="补充审阅重点（可选）" />
           </el-form-item>
-          <el-button type="primary" style="width: 100%" :loading="running" @click="startReview">开始审阅</el-button>
         </el-form>
+        <el-button type="primary" style="width: 100%" :loading="running" :disabled="historyLoading" @click="startReview">{{ running ? '正在后台审阅' : '开始审阅' }}</el-button>
+        <el-button v-if="submitting || (selected && ['processing', 'cancelling'].includes(selected.status))" type="danger" plain style="width: 100%; margin: 12px 0 0" :loading="stopping || cancelRequested || selected?.status === 'cancelling'" @click="stopReview">{{ submitting ? '取消发起' : '停止审阅' }}</el-button>
+        <p class="background-hint">审阅在后台进行，可以切换页面或关闭浏览器，稍后回来查看结果。</p>
       </el-card>
     </el-col>
     <el-col :span="16">
       <el-card shadow="hover">
         <template #header>
           <div class="head">
-            <span>审阅结果（SSE 实时流）</span>
+            <span>审阅进度与结果</span>
             <el-tag v-if="summary?.review_status === 'incomplete'" type="warning">审阅待补查</el-tag>
             <el-tag v-else-if="summary" :type="riskTag(summary.overall_risk)">整体风险：{{ summary.overall_risk }}</el-tag>
           </div>
         </template>
+        <el-select v-if="jobs.length" :model-value="selectedId" placeholder="选择审阅记录" style="width: 100%; margin-bottom: 16px" :disabled="submitting" @change="review.select">
+          <el-option v-for="job in jobs" :key="job.id" :value="job.id" :label="`${job.title} · ${statusLabel(job.status)} · ${new Date(job.created_at).toLocaleString()}`" />
+        </el-select>
+        <el-button size="small" style="margin-bottom: 12px" @click="review.refresh">刷新审阅记录</el-button>
+        <el-alert v-if="connectionError" :title="connectionError" type="warning" :closable="false" style="margin-bottom: 12px" />
+        <el-alert v-if="selected" :title="statusText" :type="selected.status === 'failed' ? 'error' : selected.status === 'completed' ? 'success' : 'info'" :closable="false" style="margin-bottom: 16px" />
         <el-empty v-if="!riskPoints.length && !running" :description="summary ? (summary.review_status === 'incomplete' ? '部分依据或意见未完成核验，暂不能判断合同风险' : '当前材料与审阅范围内未发现风险点') : '发起审阅后，风险点将实时展示在这里'" />
         <el-timeline v-if="riskPoints.length">
           <el-timeline-item
-            v-for="p in riskPoints"
-            :key="p.id"
+            v-for="(p, pointIndex) in riskPoints"
+            :key="p.id || `preview-${pointIndex}`"
             :type="levelType(p.risk_level)"
             :hollow="p.risk_level === '低'"
             :timestamp="`第 ${p.index} 条 · ${p.risk_dim}`"
@@ -60,10 +69,10 @@
                 <el-button
                   size="small"
                   :disabled="running || !p.id"
-                  :type="p.id && acceptedMap[p.id] ? 'success' : 'default'"
+                  :type="p.is_accepted ? 'success' : 'default'"
                   @click="accept(p)"
                 >
-                  {{ p.id && acceptedMap[p.id] ? '已采纳' : '采纳' }}
+                  {{ p.is_accepted ? '已采纳' : '采纳' }}
                 </el-button>
               </div>
             </div>
@@ -77,34 +86,73 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '@/api/contract'
 import { adminApi } from '@/api/dashboard'
-import { TOKEN_KEY } from '@/api/http'
-import { openSse } from '@/utils/sse'
-import type { ContractFile, ContractType, ReviewSummary, RiskPoint } from '@/types/api'
+import { reviewApi } from '@/api/review'
+import { useAuthStore } from '@/stores/auth'
+import { useReviewStore } from '@/stores/review'
+import type { ContractFile, ContractType, ReviewJob, RiskPoint } from '@/types/api'
 
+const review = useReviewStore()
+const auth = useAuthStore()
+const route = useRoute()
+const router = useRouter()
+const ready = ref(false)
+const historyLoading = ref(false)
+let historySequence = 0
+let disposed = false
+const { fileId, contractType, stance, intensity, description, running, stopping,
+  selected, selectedId, jobs, submitting, cancelRequested, connectionError } = storeToRefs(review)
 const files = ref<ContractFile[]>([])
 const types = ref<ContractType[]>([])
-const fileId = ref<number>()
-const contractType = ref('')
-const stance = ref<'甲方' | '乙方'>('甲方')
-const intensity = ref<'严格' | '标准' | '宽松'>('标准')
-const description = ref('')
-const running = ref(false)
-const riskPoints = ref<RiskPoint[]>([])
-const summary = ref<ReviewSummary | null>(null)
-const acceptedMap = ref<Record<number, boolean>>({})
-const abortRef = ref<(() => void) | null>(null)
+const riskPoints = computed(() => selected.value?.risk_points || [])
+const summary = computed(() => selected.value?.summary || null)
+const statusText = computed(() => {
+  const job = selected.value
+  if (!job) return ''
+  if (job.status === 'processing') return `正在后台审阅，共 ${job.chunk_count || '…'} 个条款，已发现 ${job.risk_points.length} 条初步意见。可以继续使用其他功能。`
+  if (job.status === 'cancelling') return '正在停止审阅，稍后即可重新发起。'
+  if (job.status === 'cancelled') return '已停止审阅。下方仅保留停止前的初步意见，不代表完整审阅结论。'
+  if (job.status === 'failed') return job.error || '本次审阅未完成，可以重新发起。'
+  if (job.status === 'pending') return '这次审阅尚未开始，可以重新发起。'
+  return '审阅已完成，结果已保存。'
+})
 
 onMounted(async () => {
+  void review.refresh()
   const [contracts, contractTypes] = await Promise.all([api.list(), adminApi.contractTypes()])
   files.value = contracts.filter((f) => f.parse_status === 'parsed')
   types.value = contractTypes.filter((type) => Boolean(type.is_active))
+  ready.value = true
 })
 
-onUnmounted(() => abortRef.value?.())
+watch([() => auth.user?.id, () => route.query.repeat, ready], async ([owner, id, loaded]) => {
+  const sequence = ++historySequence
+  historyLoading.value = false
+  if (!owner || typeof id !== 'string' || !loaded) return
+  historyLoading.value = true
+  try {
+    const detail = await reviewApi.historyDetail(id)
+    if (disposed || sequence !== historySequence || auth.user?.id !== owner) return
+    if (!detail.can_repeat || !files.value.some((file) => file.id === detail.file_id)) {
+      ElMessage.warning('该合同当前无法重新审阅，请先查看审阅状态和合同解析状态')
+      return
+    }
+    review.prepareFromHistory(detail)
+    if (!types.value.some((type) => type.name === contractType.value)) contractType.value = ''
+    ElMessage.success('已带入上次审阅配置，确认或调整后点击开始审阅')
+    await router.replace({ name: 'review', query: { ...route.query, repeat: undefined } })
+  } catch {
+    if (!disposed && sequence === historySequence) ElMessage.error('载入历史配置失败，请重新选择记录')
+  } finally {
+    if (!disposed && sequence === historySequence) historyLoading.value = false
+  }
+}, { immediate: true })
+onUnmounted(() => { disposed = true; ++historySequence })
 
 function onFileChange() {
   const file = files.value.find((item) => item.id === fileId.value)
@@ -113,73 +161,23 @@ function onFileChange() {
 
 async function startReview() {
   if (!fileId.value) return ElMessage.warning('请先选择合同')
-  const selectedType = types.value.find((type) => type.name === contractType.value)
-  const selectedFile = files.value.find((file) => file.id === fileId.value)
-  if (selectedType && selectedFile) {
-    await api.setType(selectedFile.id, selectedType.id, stance.value === '乙方' ? 1 : 0)
-    selectedFile.contract_type_id = selectedType.id
-    selectedFile.review_position = stance.value === '乙方' ? 1 : 0
+  try {
+    await review.start(files.value, types.value)
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '启动审阅失败，请重试')
   }
-  abortRef.value?.()
-  const session = await api.createSession(`审阅-${Date.now()}`, 'review', fileId.value)
-  riskPoints.value = []
-  summary.value = null
-  acceptedMap.value = {}
-  running.value = true
-
-  const url = `${import.meta.env.VITE_API_BASE || '/api'}/reviews/start`
-  const token = localStorage.getItem(TOKEN_KEY) || ''
-  abortRef.value = openSse({
-    url,
-    kind: 'review',
-    token,
-    body: {
-      session_id: session.session_id,
-      stance: stance.value,
-      intensity: intensity.value,
-      description: description.value || null,
-      contract_type: contractType.value,
-    },
-    onEvent: (payload) => {
-      const ev = payload as { event: string; data: unknown } & { type?: string }
-      if (ev.event === 'message') {
-        upsertRiskPoint(ev.data as RiskPoint)
-      } else if (ev.event === 'end') {
-        riskPoints.value = riskPoints.value.filter((point) => Boolean(point.id))
-        summary.value = ev.data as ReviewSummary
-        running.value = false
-      } else if (ev.event === 'error') {
-        ElMessage.error((ev.data as { message: string }).message)
-        running.value = false
-      }
-    },
-  })
 }
 
-async function accept(p: RiskPoint) {
-  if (!p.id || !p.task_id || !p.session_id) return
-  const accepted = !acceptedMap.value[p.id]
-  await api.acceptRiskPoint(p.task_id, p.session_id, p.index, accepted)
-  acceptedMap.value[p.id] = accepted
+async function stopReview() {
+  await review.stop()
 }
 
-function upsertRiskPoint(point: RiskPoint) {
-  if (point.id) {
-    const persistedIndex = riskPoints.value.findIndex((item) => item.id === point.id)
-    if (persistedIndex >= 0) {
-      riskPoints.value[persistedIndex] = point
-      return
-    }
-  }
-  const streamedIndex = riskPoints.value.findIndex(
-    (item) =>
-      !item.id &&
-      item.original_content === point.original_content &&
-      item.risk_dim === point.risk_dim &&
-      item.risk_analysis === point.risk_analysis,
-  )
-  if (streamedIndex >= 0 && point.id) riskPoints.value[streamedIndex] = point
-  else if (streamedIndex < 0) riskPoints.value.push(point)
+async function accept(point: RiskPoint) {
+  await review.accept(point)
+}
+
+function statusLabel(status: ReviewJob['status']) {
+  return { pending: '待开始', processing: '审阅中', cancelling: '停止中', completed: '已完成', cancelled: '已停止', failed: '未完成' }[status]
 }
 
 function contractLabel(file: ContractFile) {
@@ -198,6 +196,7 @@ function riskTag(risk: string) {
 
 <style scoped>
 .head { display: flex; justify-content: space-between; align-items: center; }
+.background-hint { color: #666; font-size: 13px; line-height: 1.6; }
 .point { line-height: 1.6; }
 .orig { color: #333; }
 .analysis { color: #c4561d; margin-top: 4px; }

@@ -3,6 +3,7 @@ import asyncio
 import json
 import re
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
 from anyio import CancelScope
@@ -58,6 +59,10 @@ async def stream_review_events(
     current_user: User,
     db: DBSession,
     rag: RAGService | None = None,
+    *,
+    lock_token: str | None = None,
+    on_complete: Callable | None = None,
+    commit_guard: Callable[[], Awaitable[bool]] | None = None,
 ) -> StreamingResponse:
     session = db.get(Session, request.session_id)
     if session is None or session.user_id != current_user.id:
@@ -99,8 +104,8 @@ async def stream_review_events(
     async def gen():
         # Redis 并发锁：同一会话只允许一个审阅任务（防止并发互删旧结果）
         lock_key = f"review_lock:{request.session_id}"
-        lock_token = f"{request.session_id}-{id(request)}"
-        if not await acquire_lock(lock_key, lock_token, ttl=900):
+        owner_token = lock_token or f"{request.session_id}-{id(request)}"
+        if not await acquire_lock(lock_key, owner_token, ttl=900):
             yield f"data: {json.dumps({'event': 'error', 'data': {'message': '该会话已有审阅任务进行中，请等待完成'}}, ensure_ascii=False)}\n\n"
             return
         t0 = time.monotonic()
@@ -117,9 +122,13 @@ async def stream_review_events(
             db.add(task)
             db.commit()
             db.refresh(task)
+            task_id = task.id
+            # End the refresh-only transaction before waiting on model inference.
+            # Background reviews must not occupy a DB connection for their full duration.
+            db.rollback()
             # 首事件 meta 骨架：与 LLM 无关，首字节 <100ms 必达
             # （routed/risk_dims 此时尚未由 router 节点填充，故不输出，避免误导）
-            yield f"data: {json.dumps({'event': 'meta', 'data': {'task_id': task.id, 'session_id': request.session_id, 'chunk_count': len(chunks)}}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'event': 'meta', 'data': {'task_id': task_id, 'session_id': request.session_id, 'chunk_count': len(chunks)}}, ensure_ascii=False)}\n\n"
             graph = get_graph(rag or get_rag_service())
             # 流式执行：custom 模式推送专家实时结果，updates 模式收集仲裁后的最终状态
             stream = graph.astream(state, stream_mode=["custom", "updates"])
@@ -151,8 +160,13 @@ async def stream_review_events(
 
             if not arbitration_seen:
                 raise RuntimeError("审阅未生成最终结论，已有结果已保留")
-            if not await renew_lock(lock_key, lock_token, ttl=900):
+            if not await renew_lock(lock_key, owner_token, ttl=900):
                 raise RuntimeError("审阅锁已过期，本次结果未替换已有结果，请重试")
+            if commit_guard is not None and not await commit_guard():
+                raise RuntimeError("后台任务失去执行权，本次结果未替换已有结果，请重新发起")
+            from app.services.review_history import archive_replaced_reviews
+
+            archive_replaced_reviews(db, request.session_id, task.id, state["user_id"])
             # Replace results atomically. A failed or disconnected run keeps prior results.
             records = []
             for idx, point in enumerate(points, start=1):
@@ -179,6 +193,17 @@ async def stream_review_events(
             ).delete(synchronize_session=False)
             task.status = "completed"
             task.completed_at = datetime.now(UTC)
+            duration_ms = (time.monotonic() - t0) * 1000
+            end_data = {
+                "type": "summary", "summary": summary.get("summary", ""),
+                "suggestion": summary.get("suggestion", ""),
+                "overall_risk": summary.get("overall_risk", "低"),
+                "review_status": summary.get("review_status", "incomplete"),
+                "metrics": {"total_ms": round(duration_ms, 1), "risk_point_count": len(points)},
+            }
+            if on_complete is not None:
+                db.flush()
+                on_complete(task, records, end_data)
             db.commit()
             for record in records:
                 msg = {"event": "message", "data": {
@@ -189,20 +214,12 @@ async def stream_review_events(
                 }}
                 yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
 
-            duration_ms = (time.monotonic() - t0) * 1000
             record_metric("review", ttft_ms=None, total_ms=duration_ms, tokens=None)
 
             end_msg = json.dumps(
                 {
                     "event": "end",
-                    "data": {
-                        "type": "summary",
-                        "summary": summary.get("summary", ""),
-                        "suggestion": summary.get("suggestion", ""),
-                        "overall_risk": summary.get("overall_risk", "低"),
-                        "review_status": summary.get("review_status", "incomplete"),
-                        "metrics": {"total_ms": round(duration_ms, 1), "risk_point_count": len(points)},
-                    },
+                    "data": end_data,
                 },
                 ensure_ascii=False,
             )
@@ -225,7 +242,7 @@ async def stream_review_events(
                     if stream is not None:
                         await stream.aclose()
                 finally:
-                    await release_lock(lock_key, lock_token)
+                    await release_lock(lock_key, owner_token)
 
     @traced("review", session_id=request.session_id)
     async def scoped_gen():

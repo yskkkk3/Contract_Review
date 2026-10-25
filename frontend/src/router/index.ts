@@ -12,6 +12,7 @@ const router = createRouter({
         { path: 'dashboard', name: 'dashboard', component: () => import('@/views/DashboardView.vue') },
         { path: 'contracts', name: 'contracts', component: () => import('@/views/ContractsView.vue') },
         { path: 'review', name: 'review', component: () => import('@/views/ReviewView.vue') },
+        { path: 'review-history', name: 'review-history', component: () => import('@/views/ReviewHistoryView.vue') },
         { path: 'compare', name: 'compare', component: () => import('@/views/CompareView.vue') },
         { path: 'chat', name: 'chat', component: () => import('@/views/ChatView.vue') },
         { path: 'admin', name: 'admin', component: () => import('@/views/AdminView.vue'), meta: { admin: true } },

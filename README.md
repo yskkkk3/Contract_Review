@@ -54,6 +54,10 @@ flowchart LR
 
 审阅任务在 LangGraph 状态机中经过分发、分析、校验和汇总。专家任务按照“条款 × 风险维度”展开，并受并发上限控制。
 
+前端审阅由后台任务执行，切换模块、刷新或关闭浏览器后仍会继续，返回时恢复进度与结果；用户可随时请求停止。运行方式、任务接口及服务重启的边界见 [后台审阅说明](docs/background-review.md)。
+
+“审阅历史”支持按合同、状态查询和分页，查看以往风险点与摘要，并复用上次配置重新审阅；同时兼容仍保存在数据库中的旧版记录，详见 [审阅历史说明](docs/review-history.md)。
+
 ```mermaid
 flowchart TD
     A["合同正文切分"] --> B["意图判断"]
@@ -243,13 +247,13 @@ ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:6333:127.0.0.1:6333 <ssh-user>@<
 配置好根目录 `.env` 后：
 
 ```bash
-docker compose -f deploy/docker-compose.yml up -d --build
-docker compose -f deploy/docker-compose.yml exec backend python scripts/ingest_kb.py
+docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
+docker compose --env-file .env -f deploy/docker-compose.yml exec backend python scripts/ingest_kb.py
 ```
 
-Compose 编排 MySQL、Redis、Qdrant、后端、前端，以及 Langfuse 和其 PostgreSQL 数据库。前端入口为 `http://localhost`，Langfuse 入口为 `http://localhost:13000`。
+Compose 默认启动 MySQL、Redis、Qdrant、后端和前端。Langfuse v4 及其数据库、队列和对象存储通过 `--profile observability` 按需启动；前端入口为 `http://localhost`，Langfuse 入口为 `http://localhost:13000`。
 
-这是本地联调部署配置；其中的示例数据库口令、JWT 和 Langfuse 参数应在部署到自己的环境前配置好。CI 中的部署步骤目前为占位入口。
+这是本地联调部署配置；其中的示例数据库口令、JWT 和 Langfuse 参数应在部署到自己的环境前配置好。CI 已接入前端测试/lint；SSH 部署等待全部质量门禁，默认关闭。配置与启用方法见 [运行时配置与集成](docs/runtime-integrations.md)。
 
 ## 开发与验证
 

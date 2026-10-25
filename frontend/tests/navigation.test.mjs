@@ -20,6 +20,7 @@ test('shell navigation preserves the existing route names, paths, labels and adm
     ['dashboard', '/dashboard', '工作台', false],
     ['contracts', '/contracts', '合同管理', false],
     ['review', '/review', '智能审阅', false],
+    ['review-history', '/review-history', '审阅历史', false],
     ['compare', '/compare', '合同比对', false],
     ['chat', '/chat', '智能问答', false],
     ['admin', '/admin', '系统配置', true],
