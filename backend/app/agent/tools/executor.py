@@ -20,7 +20,7 @@ from app.agent.prompts import load_prompt
 from app.agent.tools.registry import Tool, ToolContext, tool_schemas
 from app.core.config import get_settings
 from app.core.langfuse import traced
-from app.rag.client import LLMClient, is_provider_access_error
+from app.rag.client import LLMClient, LLMOutputTruncated, is_provider_unavailable_error
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ async def _run_tool(
         text, doc_ids = await tool.handler(args, ctx)
         ok = True
     except Exception as exc:  # noqa: BLE001 工具异常回喂模型，允许其换参重试
-        if is_provider_access_error(exc):
+        if is_provider_unavailable_error(exc) or isinstance(exc, LLMOutputTruncated):
             raise
         text, doc_ids, ok = f"（工具执行失败：{exc}）", [], False
     ms = int((time.monotonic() - start) * 1000)
@@ -96,7 +96,7 @@ async def call_llm_with_tools(
     max_iterations = max_iterations or settings.agent_max_tool_iterations
     if not settings.agent_tool_calling_enabled:
         # 总开关关闭：跳过工具循环，直接文本生成
-        text = await client.chat(messages, model=model, temperature=temperature, max_tokens=max_tokens)
+        text = await client.chat(messages, model=model, temperature=temperature, max_tokens=max_tokens, brief=True)
         return text, []
 
     tools_by_name = {t.name: t for t in tools}
@@ -112,6 +112,7 @@ async def call_llm_with_tools(
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
+            brief=True,
         )
         tool_calls = getattr(message, "tool_calls", None) or []
         if not tool_calls:
@@ -157,7 +158,7 @@ async def call_llm_with_tools(
         )
         return final_message or "", records
     except Exception as exc:  # noqa: BLE001
-        if is_provider_access_error(exc):
+        if is_provider_unavailable_error(exc) or isinstance(exc, LLMOutputTruncated):
             raise
         logger.warning("final convergence chat failed: %s", exc)
         return "", records

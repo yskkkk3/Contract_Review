@@ -46,7 +46,7 @@ def rule_amount_consistency(text: str) -> list[dict]:
 def rule_ip_ownership(text: str) -> list[dict]:
     if ("开发" in text or "成果" in text or "源代码" in text) and "知识产权" not in text:
         return [_make(text[:200], "涉及开发/成果条款但未约定知识产权归属，存在权属争议风险", "高",
-                      "区分既有成果与定制成果，明确知识产权归属及学校必要的使用、修改和维护权限", "知识产权与保密")]
+                      "区分既有成果与定制成果，明确知识产权归属及履约所需且经约定的使用、修改和维护权限", "知识产权与保密")]
     return []
 
 

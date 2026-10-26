@@ -2,6 +2,7 @@
 import json
 
 from app.agent.prompts import load_prompt
+from app.agent.review_profiles import assessed_scope, profiled
 from app.agent.state import ReviewState
 from app.core.config import get_settings
 from app.rag.client import get_sf_client
@@ -76,7 +77,7 @@ async def _llm_summary(points: list[dict], stance: str) -> dict:
             model_type="review", json_schema=SUMMARY_SCHEMA,
             model=settings.llm_review_model,
             temperature=0.2,
-            max_tokens=512,
+            max_tokens=1024,
         )
         if data:
             return {
@@ -94,13 +95,22 @@ async def _llm_summary(points: list[dict], stance: str) -> dict:
     }
 
 
+@profiled()
 async def arbitration_node(state: ReviewState) -> dict:
+    scope = assessed_scope(
+        state.get("contract_type"),
+        state.get("specialist_outputs", []),
+        state.get("supplement_files", []),
+    )
+    if scope["checklist_status"] == "incomplete":
+        state = {**state, "errors": [*state.get("errors", []), "分类专项检查未全部完成"]}
     if state.get("intent") not in (None, "review"):
         state = {**state, "errors": [*state.get("errors", []), "审阅流程未执行"]}
     points = _arbitrate_rules(state["gated"], state.get("chunks"))
     summary = await _llm_summary(points, state["stance"])
     summary["overall_risk"] = _overall_risk(points)
     summary["review_status"] = "incomplete" if state.get("errors") else "completed"
+    summary["review_scope"] = scope
     if state.get("errors"):
         summary["summary"] = (
             "本次存在关键证据缺口或部分意见未能核验，尚未形成完整审阅结论；"

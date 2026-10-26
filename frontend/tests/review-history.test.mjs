@@ -30,16 +30,19 @@ async function setup(api = {}, query = {}) {
     vue: { computed, reactive, ref, watch: (...args) => { const stop = watch(...args); watchers.push(stop); return stop },
       onUnmounted: (fn) => unmounts.push(fn) },
     'vue-router': { useRoute: () => route, useRouter: () => ({ push: (target) => navigations.push(target) }) },
+    'element-plus': { ElMessage: { error() {} } },
     '@/api/review': { reviewApi: { history: async () => pageResult('initial'), ...api } },
     '@/stores/auth': { useAuthStore: () => auth },
     '@/stores/review': { useReviewStore: () => review },
+    '@/components/review/ReviewScopePanel.vue': { default: {} },
     '@/utils/review-history': utils,
   }
   const source = await readFile(new URL('../src/views/ReviewHistoryView.vue', import.meta.url), 'utf8')
   const context = createContext({})
   const module = new SourceTextModule(transpile(parse(source).descriptor.scriptSetup.content + `
     export { items, total, page, pageSize, filters, loading, listError, load, search,
-      openDetail, closeDetail, detail, detailLoading, detailError, repeat, emptyDescription };
+      openDetail, closeDetail, detail, detailLoading, detailError, repeat, askAboutReview,
+      emptyDescription };
   `), { context })
   await module.link((name) => new SyntheticModule(Object.keys(imports[name]), function () {
     for (const [key, value] of Object.entries(imports[name])) this.setExport(key, value)
@@ -128,6 +131,16 @@ test('unmount blocks pending detail updates and re-review navigates without infe
   pending.resolve({ id: 'old' })
   await old
   assert.equal(view.detail.value, null)
+})
+
+test('review Q&A creates a linked chat and navigates to that exact session', async () => {
+  const { view, navigations, unmount } = await setup({
+    createChat: async (id) => ({ session_id: 19, source_review_id: id }),
+  })
+  await view.askAboutReview('review-19')
+  assert.equal(navigations.at(-1).name, 'chat')
+  assert.equal(navigations.at(-1).query.session_id, '19')
+  unmount()
 })
 
 test('incomplete and missing historical conclusions are never shown as low risk', () => {

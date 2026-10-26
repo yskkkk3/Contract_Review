@@ -26,6 +26,7 @@ def graph(monkeypatch):
             from app.core.runtime_config import model_config
 
             self.runtime = model_config("review")
+            self.state = args[0]
             self.started.set()
             try:
                 yield "custom", {"type": "risk_point", "risk_dim": "付款", "points": [{
@@ -49,11 +50,15 @@ def graph(monkeypatch):
     instance.release.set()
 
 
-def start(client, headers, file_id):
+def start(client, headers, file_id, supplement_file_ids=None):
     sid = client.post("/api/sessions", headers=headers, json={
         "title": "background", "session_type": "review", "file_id": file_id,
     }).json()["data"]["session_id"]
-    return client.post("/api/reviews/jobs", headers=headers, json={"session_id": sid, "stance": "甲方"})
+    return client.post("/api/reviews/jobs", headers=headers, json={
+        "session_id": sid,
+        "stance": "甲方",
+        "supplement_file_ids": supplement_file_ids or [],
+    })
 
 
 def wait_status(client, headers, job_id, status):
@@ -95,6 +100,52 @@ def test_background_review_returns_early_restores_and_persists(
     assert client.delete(f"/api/sessions/{job['session_id']}", headers=auth_headers).status_code == 200
     with SessionLocal() as db:
         assert db.get(ReviewJob, job["id"]) is None
+
+
+def test_supplement_material_is_owned_parsed_bounded_and_saved(
+    client, auth_headers, other_headers, contract, graph, tmp_path,
+):
+    from app.models.contract import ContractFile
+    from tests.test_priority_fixes import user_id
+
+    supplement_text = tmp_path / "response.txt"
+    supplement_text.write_text("第一条 源代码、部署文档和测试报告应随终验交付。", encoding="utf-8")
+    with SessionLocal() as db:
+        supplement = ContractFile(
+            user_id=user_id(auth_headers), title="供应商响应文件.pdf", file_type="pdf",
+            file_path=str(supplement_text), content_path=str(supplement_text), parse_status="parsed",
+        )
+        foreign = ContractFile(
+            user_id=user_id(other_headers), title="其他用户附件.pdf", file_type="pdf",
+            file_path=str(supplement_text), content_path=str(supplement_text), parse_status="parsed",
+        )
+        db.add_all([supplement, foreign])
+        db.commit()
+        supplement_id, foreign_id = supplement.id, foreign.id
+
+    assert start(client, auth_headers, contract[0], [foreign_id]).status_code == 404
+    response = start(client, auth_headers, contract[0], [supplement_id, supplement_id])
+    assert response.status_code == 202
+    job = response.json()["data"]
+    assert job["supplement_file_ids"] == [supplement_id]
+    assert graph.started.wait(2)
+    assert graph.state["supplement_files"] == [{"file_id": supplement_id, "title": "供应商响应文件.pdf"}]
+    assert any("【补充材料：供应商响应文件.pdf】" in chunk for chunk in graph.state["chunks"])
+    graph.release.set()
+    completed = wait_status(client, auth_headers, job["id"], "completed")
+    decision = client.post(
+        f"/api/reviews/jobs/{job['id']}/materials",
+        headers=auth_headers,
+        json={"decision": "supplemented", "supplement_file_ids": [supplement_id]},
+    )
+    assert decision.status_code == 200
+    assert decision.json()["data"]["material_decision"] == "supplemented"
+    assert client.post(
+        f"/api/reviews/jobs/{job['id']}/materials",
+        headers=other_headers,
+        json={"decision": "deferred"},
+    ).status_code == 404
+    assert completed["summary"]["summary"] == "Saved summary"
 
 
 def test_cancel_stops_inference_and_allows_restart(client, auth_headers, contract, graph):

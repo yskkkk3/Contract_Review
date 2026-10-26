@@ -12,13 +12,14 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session as DBSession
 
 from app.agent.graph import get_graph
+from app.agent.review_profiles import COMMON, get_profile, profile_scope, review_scope
 from app.agent.state import ReviewState
 from app.core.cache import acquire_lock, release_lock, renew_lock
 from app.core.langfuse import traced
 from app.core.metrics import record as record_metric
 from app.core.runtime_config import prompt_scope
 from app.core.storage import get_storage
-from app.models.contract import ContractFile
+from app.models.contract import ContractFile, ContractType
 from app.models.review import ReviewResult, ReviewTask
 from app.models.session_message import Session, SessionTypeEnum
 from app.models.user import User
@@ -26,6 +27,24 @@ from app.rag.service import RAGService, get_rag_service
 from app.schemas.review import ReviewStartRequest
 
 CLAUSE_RE = re.compile(r"^第[一二三四五六七八九十百千0-9]+[条款]")
+
+
+def resolve_review_type(db, contract, requested=""):
+    assigned = db.get(ContractType, contract.contract_type_id) if contract.contract_type_id else None
+    requested = requested.strip()
+    if assigned is not None:
+        if not assigned.is_active:
+            raise HTTPException(422, "合同类型已停用，请先选择启用的合同类型")
+        same_profile = get_profile(requested) is not COMMON and get_profile(requested) is get_profile(assigned.name)
+        if requested and requested != assigned.name and not same_profile:
+            raise HTTPException(422, "审阅类型与合同保存的类型不一致，请刷新后重新选择")
+        return assigned.name, assigned.id
+    selected = db.query(ContractType).filter_by(name=requested).first() if requested else None
+    if selected is None and requested and get_profile(requested) is not COMMON:
+        selected = db.query(ContractType).filter_by(name=get_profile(requested).name).first()
+    if selected is not None and not selected.is_active:
+        raise HTTPException(422, "合同类型已停用，请先选择启用的合同类型")
+    return (selected.name, selected.id) if selected else (requested, None)
 
 
 def split_contract_clauses(text: str, max_chars: int = 1500) -> list[str]:
@@ -54,6 +73,24 @@ def split_contract_clauses(text: str, max_chars: int = 1500) -> list[str]:
     return out or [text[:max_chars]]
 
 
+def _supplement_contracts(db, user_id: int, primary_file_id: int, file_ids: list[int]):
+    unique_ids = list(dict.fromkeys(file_ids))
+    if primary_file_id in unique_ids:
+        raise HTTPException(422, "主合同不能同时作为补充材料")
+    if not unique_ids:
+        return []
+    records = db.query(ContractFile).filter(
+        ContractFile.id.in_(unique_ids), ContractFile.user_id == user_id,
+    ).all()
+    by_id = {record.id: record for record in records}
+    if any(file_id not in by_id for file_id in unique_ids):
+        raise HTTPException(404, "Supplement file not found")
+    ordered = [by_id[file_id] for file_id in unique_ids]
+    if any(record.parse_status != "parsed" or not record.content_path for record in ordered):
+        raise HTTPException(400, "补充材料尚未解析完成，暂不能用于审阅")
+    return ordered
+
+
 async def stream_review_events(
     request: ReviewStartRequest,
     current_user: User,
@@ -74,15 +111,32 @@ async def stream_review_events(
         raise HTTPException(404, "Contract file not found")
     if contract.parse_status != "parsed" or not contract.content_path:
         raise HTTPException(400, "File not parsed, review unsupported")
+    contract_type, contract_type_id = resolve_review_type(db, contract, request.contract_type)
 
-    content = get_storage().read_text(contract.content_path)
-    chunks = split_contract_clauses(content)
+    storage = get_storage()
+    content = storage.read_text(contract.content_path)
+    primary_chunks = split_contract_clauses(content)
+    supplements = _supplement_contracts(
+        db, current_user.id, contract.id, request.supplement_file_ids,
+    )
+    chunks = list(primary_chunks)
+    supplement_files = [{"file_id": item.id, "title": item.title} for item in supplements]
+    for item in supplements:
+        supplemental_text = storage.read_text(item.content_path)
+        chunks.extend(
+            f"【补充材料：{item.title}】\n{chunk}"
+            for chunk in split_contract_clauses(supplemental_text)
+        )
+    scope = review_scope(contract_type)
+    scope["supplement_files"] = supplement_files
 
     state: ReviewState = {
         "session_id": request.session_id,
         "file_id": contract.id,
         "user_id": current_user.id,
-        "contract_type": request.contract_type or "",
+        "contract_type": contract_type,
+        "review_scope": scope,
+        "supplement_files": supplement_files,
         "stance": request.stance,
         "intensity": request.intensity,
         "description": request.description or "",
@@ -99,8 +153,6 @@ async def stream_review_events(
         "errors": [],
     }
 
-    contract_type_id = contract.contract_type_id
-
     async def gen():
         # Redis 并发锁：同一会话只允许一个审阅任务（防止并发互删旧结果）
         lock_key = f"review_lock:{request.session_id}"
@@ -116,7 +168,7 @@ async def stream_review_events(
             task = ReviewTask(
                 session_id=request.session_id, file_id=state["file_id"],
                 user_id=state["user_id"], stance=request.stance, intensity=request.intensity,
-                description=request.description or "", contract_type=request.contract_type or "",
+                description=request.description or "", contract_type=contract_type,
                 status="processing",
             )
             db.add(task)
@@ -128,7 +180,7 @@ async def stream_review_events(
             db.rollback()
             # 首事件 meta 骨架：与 LLM 无关，首字节 <100ms 必达
             # （routed/risk_dims 此时尚未由 router 节点填充，故不输出，避免误导）
-            yield f"data: {json.dumps({'event': 'meta', 'data': {'task_id': task_id, 'session_id': request.session_id, 'chunk_count': len(chunks)}}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'event': 'meta', 'data': {'task_id': task_id, 'session_id': request.session_id, 'chunk_count': len(chunks), 'review_scope': scope}}, ensure_ascii=False)}\n\n"
             graph = get_graph(rag or get_rag_service())
             # 流式执行：custom 模式推送专家实时结果，updates 模式收集仲裁后的最终状态
             stream = graph.astream(state, stream_mode=["custom", "updates"])
@@ -199,6 +251,7 @@ async def stream_review_events(
                 "suggestion": summary.get("suggestion", ""),
                 "overall_risk": summary.get("overall_risk", "低"),
                 "review_status": summary.get("review_status", "incomplete"),
+                "review_scope": summary.get("review_scope") or scope,
                 "metrics": {"total_ms": round(duration_ms, 1), "risk_point_count": len(points)},
             }
             if on_complete is not None:
@@ -248,7 +301,7 @@ async def stream_review_events(
     async def scoped_gen():
         from contextlib import aclosing
 
-        with prompt_scope(contract_type_id):
+        with prompt_scope(contract_type_id), profile_scope(contract_type):
             async with aclosing(gen()) as source:
                 async for frame in source:
                     yield frame

@@ -11,7 +11,13 @@ from app.models.contract import ContractFile
 from app.models.review import ReviewJob, ReviewResult, ReviewTask
 from app.models.user import User
 from app.schemas.base import GenericResponse
-from app.schemas.review import AcceptContractFileRequest, AcceptRiskPointRequest, ReviewStartRequest
+from app.schemas.review import (
+    AcceptContractFileRequest,
+    AcceptRiskPointRequest,
+    MaterialDecisionRequest,
+    ReviewStartRequest,
+)
+from app.schemas.session import SessionResponse
 
 router = APIRouter(prefix="/reviews", tags=["reviews"], dependencies=[Depends(runtime_dependency)])
 
@@ -38,6 +44,25 @@ async def review_history_detail(
     from app.services.review_history import history_detail
 
     return GenericResponse(data=await history_detail(db, current_user.id, history_id))
+
+
+@router.post("/history/{history_id}/chat", response_model=GenericResponse[SessionResponse])
+async def create_review_chat(
+    history_id: str,
+    db: DBSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.review_chat import get_or_create_review_chat
+
+    session, context = await get_or_create_review_chat(db, current_user.id, history_id)
+    return GenericResponse(data=SessionResponse(
+        session_id=session.id,
+        title=session.title,
+        session_type=session.session_type.value,
+        file_id=session.file_id,
+        source_review_id=context.source_review_id,
+        created_at=session.created_at,
+    ))
 
 
 @router.post("/jobs", response_model=GenericResponse, status_code=202)
@@ -86,6 +111,41 @@ async def stop_background_review(
     from app.services.review_jobs import cancel_job
 
     return GenericResponse(data=await cancel_job(_owned_job(job_id, db, current_user), db))
+
+
+@router.post("/jobs/{job_id}/materials", response_model=GenericResponse)
+async def record_material_decision(
+    job_id: str,
+    request: MaterialDecisionRequest,
+    db: DBSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.review_jobs import job_data
+
+    job = _owned_job(job_id, db, current_user)
+    if job.status != "completed":
+        raise HTTPException(409, "审阅完成后才能处理待补材料")
+    file_ids = list(dict.fromkeys(request.supplement_file_ids))
+    if request.decision == "supplemented" and not file_ids:
+        raise HTTPException(422, "请选择至少一份补充材料")
+    if file_ids:
+        records = db.query(ContractFile).filter(
+            ContractFile.id.in_(file_ids), ContractFile.user_id == current_user.id,
+        ).all()
+        if len(records) != len(file_ids):
+            raise HTTPException(404, "Supplement file not found")
+        if any(record.id == job.file_id for record in records):
+            raise HTTPException(422, "主合同不能同时作为补充材料")
+        if any(record.parse_status != "parsed" or not record.content_path for record in records):
+            raise HTTPException(400, "补充材料尚未解析完成")
+    job.snapshot = {
+        **job.snapshot,
+        "material_decision": request.decision,
+        "chosen_supplement_file_ids": file_ids,
+    }
+    db.commit()
+    db.refresh(job)
+    return GenericResponse(data=job_data(job))
 
 
 @router.post("/start")

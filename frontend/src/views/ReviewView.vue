@@ -41,8 +41,18 @@
         <template #header>
           <div class="head">
             <span>审阅进度与结果</span>
-            <el-tag v-if="summary?.review_status === 'incomplete'" type="warning">审阅待补查</el-tag>
-            <el-tag v-else-if="summary" :type="riskTag(summary.overall_risk)">整体风险：{{ summary.overall_risk }}</el-tag>
+            <div class="result-actions">
+              <el-tag v-if="summary?.review_status === 'incomplete'" type="warning">审阅待补查</el-tag>
+              <el-tag v-else-if="summary" :type="riskTag(summary.overall_risk)">整体风险：{{ summary.overall_risk }}</el-tag>
+              <el-button
+                v-if="selected?.status === 'completed'"
+                type="primary"
+                plain
+                size="small"
+                :loading="creatingChat"
+                @click="askAboutReview"
+              >针对审阅结果提问</el-button>
+            </div>
           </div>
         </template>
         <el-select v-if="jobs.length" :model-value="selectedId" placeholder="选择审阅记录" style="width: 100%; margin-bottom: 16px" :disabled="submitting" @change="review.select">
@@ -51,6 +61,14 @@
         <el-button size="small" style="margin-bottom: 12px" @click="review.refresh">刷新审阅记录</el-button>
         <el-alert v-if="connectionError" :title="connectionError" type="warning" :closable="false" style="margin-bottom: 12px" />
         <el-alert v-if="selected" :title="statusText" :type="selected.status === 'failed' ? 'error' : selected.status === 'completed' ? 'success' : 'info'" :closable="false" style="margin-bottom: 16px" />
+        <ReviewScopePanel :scope="summary?.review_scope || selected?.review_scope" />
+        <MissingMaterialsPanel
+          :materials="missingMaterials"
+          :decision="selected?.material_decision"
+          :show-actions="selected?.status === 'completed' && !running"
+          @supplement="openSupplementDialog"
+          @defer="deferMissingMaterials"
+        />
         <el-empty v-if="!riskPoints.length && !running" :description="summary ? (summary.review_status === 'incomplete' ? '部分依据或意见未完成核验，暂不能判断合同风险' : '当前材料与审阅范围内未发现风险点') : '发起审阅后，风险点将实时展示在这里'" />
         <el-timeline v-if="riskPoints.length">
           <el-timeline-item
@@ -83,6 +101,32 @@
       </el-card>
     </el-col>
   </el-row>
+
+  <el-dialog v-model="supplementDialog" title="补充相关材料并重新审阅" width="min(640px, 92vw)" :close-on-click-modal="!supplementing">
+    <el-alert title="补充材料会与主合同一起送入新的审阅任务；原审阅记录不会被覆盖。" type="info" :closable="false" />
+    <el-form label-position="top" style="margin-top: 16px">
+      <el-form-item label="选择已解析文件">
+        <el-select v-model="supplementSelection" multiple :multiple-limit="10" filterable placeholder="可选择已上传的磋商文件、响应文件或附件" style="width: 100%">
+          <el-option v-for="file in availableSupplementFiles" :key="file.id" :label="file.title" :value="file.id" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="或上传新材料">
+        <input type="file" multiple accept=".pdf,.doc,.docx" :disabled="supplementing" @change="onSupplementFiles" />
+        <div v-if="pendingSupplementFiles.length" class="pending-files">
+          待上传：{{ pendingSupplementFiles.map((file) => file.name).join('、') }}
+        </div>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button :disabled="supplementing" @click="supplementDialog = false">取消</el-button>
+      <el-button
+        type="primary"
+        :loading="supplementing"
+        :disabled="!supplementSelection.length && !pendingSupplementFiles.length"
+        @click="confirmSupplement"
+      >上传并重新审阅</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
@@ -94,6 +138,8 @@ import { api } from '@/api/contract'
 import { adminApi } from '@/api/dashboard'
 import { reviewApi } from '@/api/review'
 import { useAuthStore } from '@/stores/auth'
+import ReviewScopePanel from '@/components/review/ReviewScopePanel.vue'
+import MissingMaterialsPanel from '@/components/review/MissingMaterialsPanel.vue'
 import { useReviewStore } from '@/stores/review'
 import type { ContractFile, ContractType, ReviewJob, RiskPoint } from '@/types/api'
 
@@ -106,11 +152,20 @@ const historyLoading = ref(false)
 let historySequence = 0
 let disposed = false
 const { fileId, contractType, stance, intensity, description, running, stopping,
-  selected, selectedId, jobs, submitting, cancelRequested, connectionError } = storeToRefs(review)
+  selected, selectedId, jobs, submitting, cancelRequested, connectionError, supplementFileIds } = storeToRefs(review)
 const files = ref<ContractFile[]>([])
 const types = ref<ContractType[]>([])
+const supplementDialog = ref(false)
+const supplementSelection = ref<number[]>([])
+const pendingSupplementFiles = ref<File[]>([])
+const supplementing = ref(false)
+const creatingChat = ref(false)
 const riskPoints = computed(() => selected.value?.risk_points || [])
 const summary = computed(() => selected.value?.summary || null)
+const missingMaterials = computed(() => summary.value?.review_scope?.missing_materials || [])
+const availableSupplementFiles = computed(() => files.value.filter(
+  (file) => file.parse_status === 'parsed' && file.id !== selected.value?.file_id,
+))
 const statusText = computed(() => {
   const job = selected.value
   if (!job) return ''
@@ -157,6 +212,83 @@ onUnmounted(() => { disposed = true; ++historySequence })
 function onFileChange() {
   const file = files.value.find((item) => item.id === fileId.value)
   contractType.value = types.value.find((type) => type.id === file?.contract_type_id)?.name || ''
+  supplementFileIds.value = []
+}
+
+function openSupplementDialog() {
+  supplementSelection.value = [...(selected.value?.supplement_file_ids || [])]
+  pendingSupplementFiles.value = []
+  supplementDialog.value = true
+}
+
+function onSupplementFiles(event: Event) {
+  const input = event.target as HTMLInputElement
+  const available = Math.max(0, 10 - new Set(supplementSelection.value).size)
+  const selectedFiles = Array.from(input.files || [])
+  pendingSupplementFiles.value = selectedFiles.slice(0, available)
+  if (selectedFiles.length > available) ElMessage.warning('每次最多选择 10 份补充材料')
+}
+
+async function deferMissingMaterials() {
+  const job = selected.value
+  if (!job) return
+  try {
+    await review.recordMaterialDecision(job.id, 'deferred')
+    ElMessage.success('已记录暂不补充；材料缺口会继续保留在本次审阅结果中')
+  } catch {
+    ElMessage.error('记录选择失败，请重试')
+  }
+}
+
+async function confirmSupplement() {
+  const source = selected.value
+  if (!source || supplementing.value) return
+  if (new Set(supplementSelection.value).size + pendingSupplementFiles.value.length > 10) {
+    return ElMessage.warning('每次最多选择 10 份补充材料')
+  }
+  supplementing.value = true
+  try {
+    const ids = new Set(supplementSelection.value)
+    for (const file of pendingSupplementFiles.value) {
+      const uploaded = await api.upload(file)
+      ids.add(uploaded.file_id)
+    }
+    const selectedIds = [...ids].filter((id) => id !== source.file_id)
+    if (!selectedIds.length) return ElMessage.warning('请至少选择或上传一份补充材料')
+    files.value = (await api.list()).filter((file) => file.parse_status === 'parsed')
+    fileId.value = source.file_id
+    contractType.value = source.contract_type
+    stance.value = source.stance
+    intensity.value = source.intensity
+    description.value = source.description
+    supplementFileIds.value = selectedIds
+    await review.start(files.value, types.value)
+    try {
+      await review.recordMaterialDecision(source.id, 'supplemented', selectedIds)
+    } catch {
+      ElMessage.warning('新审阅已开始，但原记录的补充状态保存失败，可稍后重试')
+    }
+    supplementDialog.value = false
+    ElMessage.success('补充材料已加入，新的后台审阅任务已开始')
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '补充材料并重新审阅失败，请重试')
+  } finally {
+    supplementing.value = false
+  }
+}
+
+async function askAboutReview() {
+  const job = selected.value
+  if (!job || creatingChat.value) return
+  creatingChat.value = true
+  try {
+    const session = await reviewApi.createChat(job.id)
+    await router.push({ name: 'chat', query: { session_id: String(session.session_id) } })
+  } catch {
+    ElMessage.error('创建审阅答疑会话失败，请重试')
+  } finally {
+    creatingChat.value = false
+  }
 }
 
 async function startReview() {
@@ -196,10 +328,12 @@ function riskTag(risk: string) {
 
 <style scoped>
 .head { display: flex; justify-content: space-between; align-items: center; }
+.result-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .background-hint { color: #666; font-size: 13px; line-height: 1.6; }
 .point { line-height: 1.6; }
 .orig { color: #333; }
 .analysis { color: #c4561d; margin-top: 4px; }
 .suggest { color: #1d7a3f; margin-top: 4px; }
 .actions { margin-top: 8px; display: flex; gap: 8px; align-items: center; }
+.pending-files { margin-top: 8px; color: var(--el-text-color-secondary); line-height: 1.5; }
 </style>

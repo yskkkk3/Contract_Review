@@ -1,5 +1,6 @@
 """Test fixtures: SQLite in-memory DB + fakeredis + app dependency overrides."""
 import os
+import sys
 
 os.environ.setdefault("DATABASE_URL", "sqlite://")
 os.environ.setdefault("DEBUG", "false")
@@ -25,6 +26,12 @@ class FakeLLMClient:
     async def chat(self, *args, **kwargs):
         return "{}"
 
+    async def chat_structured(self, *args, **kwargs):
+        return {}
+
+    async def chat_with_tools(self, *args, **kwargs):
+        return {"role": "assistant", "content": '{"risk_points":[]}', "tool_calls": []}
+
     async def chat_stream(self, *args, **kwargs):
         yield "[STREAM_DONE]"
 
@@ -46,7 +53,13 @@ def _mock_llm_client(monkeypatch):
     Missing credentials，CI 无 .env 即失败；本地通过是依赖 .env 的假象）。"""
     from app.rag import client as client_mod
 
-    monkeypatch.setattr(client_mod, "get_sf_client", lambda: FakeLLMClient())
+    factory = lambda: FakeLLMClient()  # noqa: E731
+    # App modules imported before this fixture retain `from ... import` aliases.
+    # Patch those too; replacing only the original module does not isolate them.
+    for name, module in list(sys.modules.items()):
+        if name.startswith("app.") and hasattr(module, "get_sf_client"):
+            monkeypatch.setattr(module, "get_sf_client", factory)
+    monkeypatch.setattr(client_mod, "get_sf_client", factory)
 
 
 @pytest.fixture()

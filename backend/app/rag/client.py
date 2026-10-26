@@ -4,18 +4,41 @@ chat / embeddings 使用 OpenAI SDK；rerank 使用供应商兼容的 HTTP 接�
 默认组合为 DeepSeek 推理 + 阿里云百炼 Embedding/Rerank。
 """
 import asyncio
+import json
+import re
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from time import monotonic
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
-from openai import AsyncOpenAI, DefaultAsyncHttpxClient
+from openai import APIConnectionError, AsyncOpenAI, DefaultAsyncHttpxClient
 
 from app.core.config import get_settings
 from app.core.langfuse import observation, traced
 from app.core.runtime_config import credential, model_config
 
 settings = get_settings()
+
+
+class LLMOutputTruncated(RuntimeError):
+    """An incomplete answer/tool call must never be interpreted as valid JSON."""
+
+    def __init__(self, message: str, *, usage: Any = None):
+        super().__init__(message)
+        self.usage = usage
+
+
+class LLMCircuitOpen(RuntimeError):
+    """Temporary local protection after repeated non-streaming provider failures."""
+
+
+@dataclass
+class _CircuitState:
+    failures: int = 0
+    retry_at: float = 0.0
+    probing: bool = False
 
 
 def provider_status_code(exc: Exception) -> int | None:
@@ -41,6 +64,26 @@ def provider_error_code(exc: Exception) -> str | None:
 def is_provider_access_error(exc: Exception) -> bool:
     """认证、余额或权限失败不能通过换输出格式重试来恢复。"""
     return provider_status_code(exc) in {401, 402, 403} or provider_error_code(exc) == "Arrearage"
+
+
+def is_provider_unavailable_error(exc: Exception) -> bool:
+    status = provider_status_code(exc)
+    return (is_provider_access_error(exc) or isinstance(
+        exc, (LLMCircuitOpen, APIConnectionError, httpx.TransportError, TimeoutError),
+    ) or status in {408, 429} or (status is not None and status >= 500))
+
+
+def _is_format_unsupported(exc: Exception) -> bool:
+    if is_provider_access_error(exc):
+        return False
+    # A gateway failure/timeout is not evidence that JSON Schema is unsupported.
+    if provider_status_code(exc) not in {400, 422, None}:
+        return False
+    matches = re.search(
+        r"response_format|json_schema|unsupported.*(?:schema|structured)|(?:schema|structured).*unsupported",
+        str(exc), re.I,
+    )
+    return bool(matches) and (isinstance(exc, ValueError) or provider_status_code(exc) in {400, 422})
 
 
 def _extract_json(raw: str) -> dict | None:
@@ -105,6 +148,7 @@ class LLMClient:
         background_slots = max(1, settings.max_concurrent_llm - settings.llm_chat_reserved_slots)
         self._background_sem = asyncio.Semaphore(background_slots)
         self._prompt_cache = settings.llm_prompt_cache
+        self._circuits: dict[tuple[int, str], _CircuitState] = {}
 
     def _provider(self, role: str):
         config = model_config(role)
@@ -142,13 +186,43 @@ class LLMClient:
 
     async def _complete(self, role: str, model: str, **options):
         model, options = self._options(role, model, options)
+        provider = self._provider(role)
+        circuit = self._circuits.setdefault((id(provider), model), _CircuitState())
+        threshold = settings.llm_circuit_failure_threshold
+        probing = False
+        if threshold and circuit.failures >= threshold:
+            if circuit.probing or monotonic() < circuit.retry_at:
+                raise LLMCircuitOpen("模型服务连续失败，已暂缓非流式请求，请稍后重试")
+            circuit.probing = probing = True
         with observation("llm.complete", as_type="generation", model=model) as span:
-            response = await self._provider(role).chat.completions.create(model=model, **options)
+            try:
+                response = await provider.chat.completions.create(model=model, **options)
+            except Exception as exc:
+                if is_provider_unavailable_error(exc) and not is_provider_access_error(exc):
+                    circuit.failures += 1
+                    if threshold and circuit.failures >= threshold:
+                        circuit.retry_at = monotonic() + settings.llm_circuit_cooldown_seconds
+                else:
+                    circuit.failures = 0
+                    circuit.retry_at = 0.0
+                raise
+            else:
+                circuit.failures = 0
+                circuit.retry_at = 0.0
+            finally:
+                if probing:
+                    circuit.probing = False
             usage = getattr(response, "usage", None)
             if usage:
                 span.update(usage_details={
                     "input": usage.prompt_tokens, "output": usage.completion_tokens,
                 })
+            if any(getattr(choice, "finish_reason", None) == "length" for choice in response.choices):
+                raise LLMOutputTruncated(
+                    f"模型输出被截断（model={model}, max_tokens={options.get('max_tokens')}），"
+                    "请核对服务商思考模式及输出预算；本次响应不能作为完整结果",
+                    usage=usage,
+                )
             return response
 
     @asynccontextmanager
@@ -244,6 +318,7 @@ class LLMClient:
             if close:
                 await close()
         self._providers.clear()
+        self._circuits.clear()
 
     # ---------- chat（OpenAI SDK） ----------
     async def chat(
@@ -275,6 +350,7 @@ class LLMClient:
         temperature: float = 0.2,
         max_tokens: int = 2048,
         tool_choice: str | dict = "auto",
+        brief: bool = False,
         **kwargs: Any,
     ):
         """OpenAI SDK Tool Calling：返回完整 message（含 tool_calls / content）。
@@ -291,7 +367,7 @@ class LLMClient:
                 tool_choice=tool_choice,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                **self._apply_cache(kwargs),
+                **self._task_options(kwargs, brief, role),
             )
         message = resp.choices[0].message
         message.content = _final_content(message)
@@ -315,35 +391,70 @@ class LLMClient:
         model = model or settings.llm_intent_model
         role = kwargs.pop("model_type", "intent")
         model, _ = self._options(role, model, {})
+        fallback_messages = messages
+        config = model_config(role)
+        endpoint = config["api_endpoint"] if config and config["api_endpoint"] else self.base_url
+        json_object_only = urlsplit(endpoint).hostname == "api.deepseek.com"
+        if not json_object_only:
+            try:
+                async with self._request_slot():
+                    resp = await self._complete(
+                        role, model,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        response_format={
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": "structured_output", "strict": True, "schema": json_schema,
+                            },
+                        },
+                        **self._task_options(kwargs, brief, role),
+                    )
+                content = _final_content(resp.choices[0].message)
+                parsed = _extract_json(content)
+                if parsed is not None:
+                    return parsed
+            except Exception as exc:  # noqa: BLE001 供应商不支持 json_schema → 走降级路径
+                if not _is_format_unsupported(exc):
+                    raise
+
+        from app.agent.prompts import load_prompt
+
+        fallback_messages = [
+            {
+                "role": "system",
+                "content": load_prompt(
+                    "structured_json_fallback",
+                    schema=json.dumps(json_schema, ensure_ascii=False),
+                ),
+            },
+            *messages,
+        ]
         try:
             async with self._request_slot():
                 resp = await self._complete(
                     role, model,
-                    messages=messages,
+                    messages=fallback_messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    response_format={
-                        "type": "json_schema",
-                        "json_schema": {"name": "structured_output", "strict": True, "schema": json_schema},
-                    },
+                    response_format={"type": "json_object"},
                     **self._task_options(kwargs, brief, role),
                 )
-            content = _final_content(resp.choices[0].message)
-            parsed = _extract_json(content)
+            parsed = _extract_json(_final_content(resp.choices[0].message))
             if parsed is not None:
                 return parsed
-        except Exception as exc:  # noqa: BLE001 供应商不支持 json_schema → 走降级路径
-            if is_provider_access_error(exc):
+        except Exception as json_exc:  # noqa: BLE001 部分供应商连 json_object 也不支持
+            if not _is_format_unsupported(json_exc):
                 raise
-            pass
         try:
             raw = await self.chat(
-                messages, model=model, temperature=temperature, max_tokens=max_tokens,
+                fallback_messages, model=model, temperature=temperature, max_tokens=max_tokens,
                 brief=brief, model_type=role, **kwargs,
             )
             return _extract_json(raw)
         except Exception as exc:  # noqa: BLE001
-            if is_provider_access_error(exc):
+            if is_provider_unavailable_error(exc) or isinstance(exc, LLMOutputTruncated):
                 raise
             return None
 

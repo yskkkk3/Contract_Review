@@ -1,4 +1,6 @@
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -9,6 +11,12 @@ class ReviewStartRequest(BaseModel):
     description: str | None = None
     contract_type: str = ""
     max_concurrent: int = Field(20, ge=1, le=100)
+    supplement_file_ids: list[int] = Field(default_factory=list, max_length=10)
+
+
+class MaterialDecisionRequest(BaseModel):
+    decision: Literal["deferred", "supplemented"]
+    supplement_file_ids: list[int] = Field(default_factory=list, max_length=10)
 
 
 class RiskPoint(BaseModel):

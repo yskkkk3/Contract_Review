@@ -9,6 +9,141 @@ import app.rag.client as client_mod
 from app.rag.client import LLMClient, _final_content
 
 
+@pytest.mark.parametrize("method", ["chat", "chat_with_tools", "chat_structured"])
+async def test_truncated_response_never_becomes_valid_json_or_tool_call(monkeypatch, fake_openai, method):
+    client = LLMClient()
+    calls = []
+
+    async def create(**kwargs):
+        calls.append(kwargs)
+        response = _FakeResp('{"risk_points":[]}')
+        response.choices[0].finish_reason = "length"
+        response.usage = type("Usage", (), {"prompt_tokens": 100, "completion_tokens": 512})()
+        return response
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    kwargs = {"json_schema": {"type": "object"}} if method == "chat_structured" else {}
+    if method == "chat_with_tools":
+        kwargs["tools"] = []
+    with pytest.raises(client_mod.LLMOutputTruncated) as raised:
+        await getattr(client, method)([], **kwargs)
+    assert len(calls) == 1
+    assert raised.value.usage.completion_tokens == 512
+
+
+@pytest.mark.parametrize("status", [408, 429, 500, 502, 503, 504])
+async def test_upstream_failure_is_not_retried_as_schema_incompatibility(monkeypatch, fake_openai, status):
+    client = LLMClient()
+    calls = 0
+    error = type("ProviderFailure", (Exception,), {"status_code": status})("upstream unavailable")
+
+    async def create(**_kwargs):
+        nonlocal calls
+        calls += 1
+        raise error
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    with pytest.raises(type(error)):
+        await client.chat_structured([], json_schema={"type": "object"})
+    assert calls == 1
+
+
+async def test_invalid_model_request_is_not_retried_as_schema_error(monkeypatch, fake_openai):
+    client = LLMClient()
+    error = type("ProviderFailure", (Exception,), {"status_code": 400})("unknown model")
+
+    async def create(**_kwargs):
+        raise error
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    with pytest.raises(type(error)):
+        await client.chat_structured([], json_schema={"type": "object"})
+
+
+async def test_tools_forward_explicit_thinking_policy(monkeypatch, fake_openai):
+    client = LLMClient()
+    client._prompt_cache = False
+    captured = []
+
+    async def create(**kwargs):
+        captured.append(kwargs)
+        return _FakeResp('{"risk_points":[]}')
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    monkeypatch.setattr(client_mod.settings, "llm_brief_disable_thinking", True)
+    monkeypatch.setattr(client_mod.settings, "llm_brief_reasoning_effort", "low")
+    await client.chat_with_tools([], [], brief=True)
+    assert captured[-1]["extra_body"]["thinking"]["type"] == "disabled"
+    assert captured[-1]["reasoning_effort"] == "low"
+    await client.chat_with_tools([], [], brief=True, extra_body={"thinking": {"type": "enabled"}})
+    assert captured[-1]["extra_body"]["thinking"]["type"] == "enabled"
+
+
+async def test_circuit_stops_repeated_failures_and_allows_only_one_recovery_probe(monkeypatch, fake_openai):
+    # This case verifies simultaneous circuit probes, independently of the
+    # production DeepSeek setting that intentionally serializes review work.
+    monkeypatch.setattr(client_mod.settings, "max_concurrent_llm", 3)
+    monkeypatch.setattr(client_mod.settings, "llm_chat_reserved_slots", 1)
+    client = LLMClient()
+    clock = [100.0]
+    calls = 0
+    started, release = asyncio.Event(), asyncio.Event()
+    error = type("ProviderFailure", (Exception,), {"status_code": 502})("upstream unavailable")
+    monkeypatch.setattr(client_mod.settings, "llm_circuit_failure_threshold", 2)
+    monkeypatch.setattr(client_mod.settings, "llm_circuit_cooldown_seconds", 20)
+    monkeypatch.setattr(client_mod, "monotonic", lambda: clock[0])
+
+    async def create(**_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls <= 2:
+            raise error
+        started.set()
+        await release.wait()
+        return _FakeResp("recovered")
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    for _ in range(2):
+        with pytest.raises(type(error)):
+            await client.chat([], model="failed-model")
+    with pytest.raises(client_mod.LLMCircuitOpen):
+        await client.chat([], model="failed-model")
+    assert calls == 2
+    clock[0] = 121.0
+    probe = asyncio.create_task(client.chat([], model="failed-model"))
+    await started.wait()
+    with pytest.raises(client_mod.LLMCircuitOpen):
+        await client.chat([], model="failed-model")
+    assert calls == 3
+    release.set()
+    assert await probe == "recovered"
+    assert await client.chat([], model="failed-model") == "recovered"
+    assert calls == 4
+
+
+async def test_circuit_does_not_block_a_different_provider(monkeypatch, fake_openai):
+    client = LLMClient()
+    monkeypatch.setattr(client_mod.settings, "llm_circuit_failure_threshold", 1)
+    error = type("ProviderFailure", (Exception,), {"status_code": 503})("upstream unavailable")
+
+    async def fail(**_kwargs):
+        raise error
+
+    async def success(**_kwargs):
+        return _FakeResp("independent provider works")
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", fail)
+    monkeypatch.setattr(client._embedding_openai.chat.completions, "create", success)
+    monkeypatch.setattr(client, "_provider", lambda role: (
+        client._embedding_openai if role == "intent" else client._openai
+    ))
+    with pytest.raises(type(error)):
+        await client.chat([], model="same-model", model_type="review")
+    with pytest.raises(client_mod.LLMCircuitOpen):
+        await client.chat([], model="same-model", model_type="review")
+    assert await client.chat([], model="same-model", model_type="intent") == "independent provider works"
+
+
 class _FakeChoice:
     def __init__(self, text: str = "ok", tool_calls=None):
         self.message = type(
@@ -511,6 +646,29 @@ async def test_nonbilling_bad_request_can_still_fall_back_to_plain_json(monkeypa
     monkeypatch.setattr(client._openai.chat.completions, "create", create)
     assert await client.chat_structured([], json_schema={"type": "object"}) == {"ok": True}
     assert calls == 2
+
+
+async def test_deepseek_official_uses_json_object_without_rejected_schema_probe(monkeypatch, fake_openai):
+    client = LLMClient()
+    client.base_url = "https://api.deepseek.com"
+    calls = []
+
+    async def create(**kwargs):
+        calls.append(kwargs)
+        return _FakeResp('{"status":"ok"}')
+
+    monkeypatch.setattr(client._openai.chat.completions, "create", create)
+    schema = {
+        "type": "object",
+        "properties": {"status": {"type": "string"}},
+        "required": ["status"],
+    }
+
+    assert await client.chat_structured([], json_schema=schema) == {"status": "ok"}
+    assert len(calls) == 1
+    assert calls[0]["response_format"] == {"type": "json_object"}
+    assert "JSON Schema" in calls[0]["messages"][0]["content"]
+    assert '"status"' in calls[0]["messages"][0]["content"]
 
 
 @pytest.mark.asyncio

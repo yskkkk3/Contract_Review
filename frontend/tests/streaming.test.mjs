@@ -61,7 +61,7 @@ const deferred = () => {
 }
 
 // Execute the actual setup script with API/lifecycle stubs; no network or UI test dependency.
-async function chatSetup(sessionApi) {
+async function chatSetup(sessionApi, query = {}) {
   const file = await readFile(new URL('../src/views/ChatView.vue', import.meta.url), 'utf8')
   const setup = parse(file).descriptor.scriptSetup.content
   const hooks = {}
@@ -71,11 +71,13 @@ async function chatSetup(sessionApi) {
   const imports = {
     vue: {
       ref: (value) => ({ value }), nextTick: (callback) => Promise.resolve().then(callback),
+      computed: (callback) => ({ get value() { return callback() } }),
       onMounted: (callback) => { hooks.mounted = callback },
       onUnmounted: (callback) => { hooks.unmounted = callback },
     },
+    'vue-router': { useRoute: () => ({ query }) },
     'element-plus': { ElMessage: { error() {} } },
-    '@/api/contract': { api: {} },
+    '@/api/contract': { api: { list: async () => [] } },
     '@/api/session': { sessionApi },
     '@/api/http': { TOKEN_KEY: 'token' },
     '@/utils/sse': { openSse: (options) => { streams.push(options); return () => aborts.push(options) } },
@@ -89,6 +91,17 @@ async function chatSetup(sessionApi) {
   await module.evaluate()
   return { ...module.namespace, hooks, streams, aborts }
 }
+
+test('a review-aware chat route opens the generated session and loads its history', async () => {
+  const session = { session_id: 9, title: '审阅答疑', file_id: 3, source_review_id: 'review-1' }
+  const chat = await chatSetup({
+    list: async () => ({ items: [session] }),
+    history: async () => [{ role: 'assistant', content: '已关联审阅结果' }],
+  }, { session_id: '9' })
+  await chat.hooks.mounted()
+  assert.equal(chat.currentId.value, 9)
+  assert.equal(chat.messages.value[0].content, '已关联审阅结果')
+})
 
 test('chat shows waiting/generating state and clears status on completion', async () => {
   const chat = await chatSetup({})

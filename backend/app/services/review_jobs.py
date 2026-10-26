@@ -14,11 +14,12 @@ from anyio import CancelScope
 from fastapi import HTTPException
 from sqlalchemy import select
 
+from app.agent.review_profiles import review_scope
 from app.core.cache import acquire_lock, release_lock, renew_lock
 from app.core.db import SessionLocal
 from app.core.redis import get_redis
 from app.models.review import ReviewJob, ReviewTask
-from app.services.review_service import stream_review_events
+from app.services.review_service import resolve_review_type, stream_review_events
 
 logger = logging.getLogger(__name__)
 ACTIVE = ("processing", "cancelling")
@@ -92,7 +93,8 @@ async def start_job(request, user):
                 raise asyncio.CancelledError
             job.status = "completed"
             job.completed_at = datetime.now(UTC)
-            job.snapshot = {**job.snapshot, "task_id": task.id, "summary": summary, "error": "", "risk_points": [{
+            job.snapshot = {**job.snapshot, "task_id": task.id, "summary": summary, "error": "",
+                            "review_scope": summary.get("review_scope") or job.snapshot.get("review_scope"), "risk_points": [{
                 "id": point.id, "task_id": task.id, "session_id": task.session_id,
                 "index": point.index, "original_content": point.original_content,
                 "risk_analysis": point.risk_analysis, "risk_level": point.risk_level,
@@ -109,12 +111,16 @@ async def start_job(request, user):
 
         session = worker_db.get(Session, request.session_id)
         contract = worker_db.get(ContractFile, session.file_id)
+        contract_type, _ = resolve_review_type(worker_db, contract, request.contract_type)
         job = ReviewJob(
             id=job_id, user_id=user.id, session_id=session.id, file_id=contract.id,
             status="processing", snapshot={
                 "title": contract.title, "stance": request.stance,
                 "intensity": request.intensity, "description": request.description or "",
-                "contract_type": request.contract_type or "", "risk_points": [],
+                "contract_type": contract_type, "risk_points": [],
+                "supplement_file_ids": list(dict.fromkeys(request.supplement_file_ids)),
+                "material_decision": None,
+                "review_scope": review_scope(contract_type),
                 "summary": None, "chunk_count": 0, "error": "",
             },
         )
@@ -176,6 +182,7 @@ async def _consume(job_id, response):
                 elif kind == "end":
                     snapshot["risk_points"] = [p for p in snapshot["risk_points"] if p.get("id")]
                     snapshot["summary"] = data
+                    snapshot["review_scope"] = data.get("review_scope") or snapshot.get("review_scope")
                     job.status = "completed"
                     job.completed_at = datetime.now(UTC)
                 elif kind == "error":

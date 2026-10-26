@@ -240,3 +240,30 @@ test('starting a copied history creates a new session and preserves the previous
   assert.equal(store.selectedId, 'new-job')
   await store.connect(null)
 })
+
+test('supplement files are preserved in a copied draft and sent to the new review', async () => {
+  let body
+  const { store } = await setup({
+    start: async (value) => { body = value; return { ...job(), supplement_file_ids: value.supplement_file_ids } },
+  })
+  await store.connect(1)
+  store.prepareFromHistory({ ...job('completed'), supplement_file_ids: [7, 8] })
+  assert.deepEqual(Array.from(store.supplementFileIds), [7, 8])
+  await store.start([], [])
+  assert.deepEqual(Array.from(body.supplement_file_ids), [7, 8])
+})
+
+test('recording a material decision updates the persisted review without changing selection', async () => {
+  const original = job('completed')
+  const { store } = await setup({
+    list: async () => [original],
+    materialDecision: async (id, decision, ids) => ({
+      ...original, id, material_decision: decision, chosen_supplement_file_ids: ids,
+    }),
+  })
+  await store.connect(1)
+  await store.recordMaterialDecision('job-1', 'supplemented', [9])
+  assert.equal(store.selectedId, 'job-1')
+  assert.equal(store.selected.material_decision, 'supplemented')
+  assert.deepEqual(Array.from(store.selected.chosen_supplement_file_ids), [9])
+})

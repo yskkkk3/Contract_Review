@@ -129,6 +129,7 @@ class Settings(BaseSettings):
     chat_contract_cache_entries: int = 64
     chat_history_max_chars: int = 24000  # 软预算；0禁用，含糊追问和全局复查仍用完整历史
     chat_history_recent_messages: int = Field(default=12, ge=2)
+    chat_review_context_max_chars: int = Field(default=32000, ge=4000)
 
     # Agent 工具调用（Tool Calling）
     agent_tool_calling_enabled: bool = True
@@ -145,8 +146,10 @@ class Settings(BaseSettings):
     llm_brief_disable_thinking: bool | None = None  # None仅官网自动处理；兼容中转可显式开启
     llm_brief_reasoning_effort: str | None = None  # 仅在当前供应商验证后显式配置
     llm_http_trust_env: bool = True  # 含系统代理；本地代理故障时可显式关闭
-    max_concurrent_llm: int = Field(default=4, ge=1)
+    max_concurrent_llm: int = Field(default=2, ge=1)
     llm_chat_reserved_slots: int = Field(default=1, ge=0)  # 总容量>1时保留聊天容量
+    llm_circuit_failure_threshold: int = Field(default=3, ge=0)  # 0禁用；非流式连续失败保护
+    llm_circuit_cooldown_seconds: float = Field(default=30.0, gt=0)
     chat_stream_timeout: float = Field(default=30.0, gt=0)  # 上游无活动超时（含思考活动）
     chat_first_content_timeout: float = Field(default=120.0, gt=0)
     chat_heartbeat_interval: float = Field(default=10.0, gt=0)

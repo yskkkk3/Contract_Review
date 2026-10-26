@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
@@ -63,11 +64,13 @@ async def _search_regulations(args: dict, ctx: ToolContext) -> tuple[str, list[s
     query = str(args.get("query", ""))
     risk_dim = args.get("risk_dim")
     top_k = max(1, min(8, int(args.get("top_k", 3))))
+    from app.agent.review_profiles import profile_scope
     from app.rag.service import RAGService
 
     if not isinstance(rag, RAGService):
         return "（检索服务不可用）", []
-    context, evidence = await rag.search_with_context(query, risk_dim=risk_dim, top_k=top_k)
+    with profile_scope(ctx["contract_type"]) if ctx.get("contract_type") else nullcontext():
+        context, evidence = await rag.search_with_context(query, risk_dim=risk_dim, top_k=top_k)
     ctx.setdefault("evidence_seen", []).extend(evidence)
     doc_ids = list(dict.fromkeys(e.chunk.doc_id for e in evidence))
     return context, doc_ids
@@ -78,7 +81,10 @@ async def _get_clause(args: dict, ctx: ToolContext) -> tuple[str, list[str]]:
     index = int(args.get("clause_index", 0))
     clauses = ctx.get("clauses") or []
     if clauses and 0 <= index < len(clauses):
-        return clauses[index][:2000], []
+        text = clauses[index]
+        if len(text) <= 2000:
+            ctx.setdefault("clause_reads", set()).add(index)
+        return text[:2000], []
     if clauses:
         return f"（条款索引{index}无效；可用范围0至{len(clauses) - 1}，不能据此认定条款缺失。）", []
     if content and index == 0:
@@ -90,8 +96,12 @@ async def _lookup_template(args: dict, ctx: ToolContext) -> tuple[str, list[str]
     rag = ctx.get("rag")
     if rag is None:
         return "（模板库不可用）", []
-    query = f"{args.get('contract_type', '')} 合同模板"
-    context, evidence = await rag.search_with_context(query, risk_dim=None, top_k=2, doc_type="template")
+    from app.agent.review_profiles import profile_scope
+
+    contract_type = ctx.get("contract_type") or args.get("contract_type", "")
+    query = f"{contract_type} 合同模板"
+    with profile_scope(contract_type):
+        context, evidence = await rag.search_with_context(query, risk_dim=None, top_k=2, doc_type="template")
     ctx.setdefault("evidence_seen", []).extend(evidence)
     doc_ids = list({e.chunk.doc_id for e in evidence})
     return context, doc_ids
@@ -137,7 +147,7 @@ def default_tools() -> list[Tool]:
     return [
         Tool(
             name="search_regulations",
-            description="检索高校采购相关法规、校内制度与合同模板知识库，返回带来源标注的证据文本，用于支撑审阅判断",
+            description="检索合同相关法规、制度与模板知识库，结合当前合同类型返回带来源的正文，制度适用性须另行核验",
             parameters=_SEARCH_PARAMS,
             handler=_search_regulations,
         ),

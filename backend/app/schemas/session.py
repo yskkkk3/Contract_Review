@@ -29,6 +29,7 @@ class SessionResponse(BaseModel):
     title: str
     session_type: str
     file_id: int | None = None
+    source_review_id: str | None = None
     created_at: datetime | None = None
 
 

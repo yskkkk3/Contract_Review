@@ -7,19 +7,30 @@
         <div v-for="s in sessions" :key="s.session_id" class="session-item" :class="{ active: s.session_id === currentId }" @click="switchSession(s)">
           <div>{{ s.title }}</div>
           <div v-if="s.file_id" class="sub">{{ fileTitle(s.file_id) }}</div>
+          <el-tag v-if="s.source_review_id" size="small" type="info">关联审阅结果</el-tag>
         </div>
       </el-card>
     </el-col>
     <el-col :span="18">
       <el-card shadow="hover" style="height: 100%; display: flex; flex-direction: column">
+        <el-alert
+          v-if="currentSession?.source_review_id"
+          title="当前会话已关联合同原文和对应审阅结果，可以要求解释风险、核对结论或指出审阅错误。"
+          type="info"
+          :closable="false"
+          style="margin-bottom: 12px"
+        />
         <div class="messages" ref="msgRef">
           <div v-for="(m, i) in messages" :key="i" class="msg" :class="m.role">
-            <div class="bubble">{{ m.content }}</div>
+            <div class="bubble">
+              <AssistantMessage v-if="m.role === 'assistant'" :content="m.content" />
+              <span v-else>{{ m.content }}</span>
+            </div>
           </div>
           <div v-if="replyStatus" class="reply-status" role="status" aria-live="polite">{{ replyStatus }}</div>
         </div>
         <div class="input-row">
-          <el-select v-model="bindFileId" placeholder="绑定合同（可选）" clearable style="width: 220px; margin-right: 12px">
+          <el-select v-model="bindFileId" :disabled="Boolean(currentId)" placeholder="绑定合同（可选）" clearable style="width: 220px; margin-right: 12px">
             <el-option v-for="f in files" :key="f.id" :label="f.title" :value="f.id" />
           </el-select>
           <el-input
@@ -38,12 +49,14 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '@/api/contract'
 import { sessionApi } from '@/api/session'
 import { TOKEN_KEY } from '@/api/http'
 import { openSse } from '@/utils/sse'
+import AssistantMessage from '@/components/chat/AssistantMessage.vue'
 import type { ContractFile, MessageInfo, SessionInfo } from '@/types/api'
 
 interface Msg {
@@ -52,6 +65,7 @@ interface Msg {
 }
 
 const sessions = ref<SessionInfo[]>([])
+const route = useRoute()
 const files = ref<ContractFile[]>([])
 const currentId = ref<number>()
 const bindFileId = ref<number>()
@@ -62,6 +76,7 @@ const replyStatus = ref('')
 const msgRef = ref<HTMLElement>()
 const abortRef = ref<(() => void) | null>(null)
 const loadingHistory = ref(false)
+const currentSession = computed(() => sessions.value.find((session) => session.session_id === currentId.value))
 let sessionVersion = 0
 let requestVersion = 0
 
@@ -69,6 +84,9 @@ onMounted(async () => {
   const [sessionData, contractData] = await Promise.all([sessionApi.list('chat'), api.list()])
   sessions.value = sessionData.items
   files.value = contractData.filter((file) => file.parse_status === 'parsed')
+  const requestedId = Number(route.query.session_id)
+  const requested = sessions.value.find((session) => session.session_id === requestedId)
+  if (requested) await switchSession(requested)
 })
 
 onUnmounted(() => {
@@ -198,7 +216,8 @@ function toMessage(message: MessageInfo): Msg {
 .messages { flex: 1; overflow-y: auto; padding: 8px; }
 .msg { margin-bottom: 12px; display: flex; }
 .msg.user { justify-content: flex-end; }
-.bubble { max-width: 70%; padding: 10px 14px; border-radius: 8px; background: #f0f2f5; line-height: 1.6; white-space: pre-wrap; }
+.bubble { max-width: min(82%, 860px); padding: 12px 16px; border-radius: 10px; background: #f0f2f5; line-height: 1.7; white-space: pre-wrap; }
+.msg.assistant .bubble { width: fit-content; min-width: min(320px, 82%); white-space: normal; }
 .msg.user .bubble { background: #409eff; color: #fff; }
 .input-row { display: flex; align-items: flex-end; padding-top: 12px; border-top: 1px solid #e5e7eb; }
 .session-item { padding: 10px 12px; border-radius: 6px; cursor: pointer; margin-bottom: 4px; }

@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from app.core.db import get_db
 from app.core.security import get_current_user
-from app.models import Message, ReviewResult, Session, SessionTypeEnum
+from app.models import Message, ReviewChatContext, ReviewResult, Session, SessionTypeEnum
 from app.models.comparison import ComparisonTask
 from app.models.contract import ContractFile
 from app.models.review import ReviewJob, ReviewTask
@@ -61,8 +61,14 @@ async def list_sessions(
         .limit(page_size)
         .all()
     )
+    source_by_session = dict(db.query(
+        ReviewChatContext.session_id, ReviewChatContext.source_review_id,
+    ).filter(ReviewChatContext.session_id.in_([session.id for session in sessions])).all())
     return GenericResponse(
-        data=PageResponse(items=[_to_response(s) for s in sessions], total=total, page=page, page_size=page_size)
+        data=PageResponse(
+            items=[_to_response(s, source_by_session.get(s.id)) for s in sessions],
+            total=total, page=page, page_size=page_size,
+        )
     )
 
 
@@ -97,6 +103,7 @@ async def delete_session(
                 ReviewJob.session_id == session_id, ReviewJob.status.in_(("processing", "cancelling")),
             ).first()):
         raise HTTPException(409, "Review is still running")
+    db.query(ReviewChatContext).filter_by(session_id=session_id).delete()
     db.query(ReviewJob).filter_by(session_id=session_id).delete()
     db.query(ReviewResult).filter_by(session_id=session_id).delete()
     db.query(ReviewTask).filter_by(session_id=session_id).delete()
@@ -167,10 +174,10 @@ async def session_history(
     raise HTTPException(400, "Unsupported session type")
 
 
-def _to_response(s: Session) -> SessionResponse:
+def _to_response(s: Session, source_review_id: str | None = None) -> SessionResponse:
     return SessionResponse(
         session_id=s.id, title=s.title, session_type=s.session_type.value,
-        file_id=s.file_id, created_at=s.created_at,
+        file_id=s.file_id, source_review_id=source_review_id, created_at=s.created_at,
     )
 
 

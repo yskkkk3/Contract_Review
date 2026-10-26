@@ -27,6 +27,8 @@ class ReviewState(TypedDict):
     file_id: int
     user_id: int
     contract_type: str
+    review_scope: dict                    # 本次分类清单版本与计划范围，非已核验结论
+    supplement_files: list[dict]          # 本次一并审阅的补充材料（id/title）
     stance: str
     intensity: str
     description: str

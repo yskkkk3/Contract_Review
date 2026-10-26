@@ -47,6 +47,7 @@ export interface SessionInfo {
   title: string
   session_type: 'review' | 'compare' | 'chat'
   file_id: number | null
+  source_review_id?: string | null
   created_at: string | null
 }
 
@@ -78,10 +79,42 @@ export interface ReviewSummary {
   suggestion: string
   overall_risk: '高' | '中' | '低'
   review_status?: 'completed' | 'incomplete'
+  review_scope?: ReviewScope
   metrics?: {
     total_ms: number
     risk_point_count: number
   }
+}
+
+export interface ReviewScope {
+  profile_id: string
+  profile_name: string
+  version: string
+  contract_type: string
+  fallback: boolean
+  checklist_status: 'configured' | 'reviewed' | 'incomplete'
+  base_dimensions: string[]
+  checks: { id: string; title: string; risk_dim: string }[]
+  check_results?: {
+    check_id: string
+    title: string
+    risk_dim: string
+    status: 'reviewed' | 'not_applicable' | 'needs_material' | 'unverified'
+    reason: string
+    clause_indices: number[]
+    basis?: 'explicit_clause' | 'read_contract'
+  }[]
+  supplement_files?: { file_id: number; title: string }[]
+  missing_materials?: MissingMaterial[]
+}
+
+export interface MissingMaterial {
+  id: string
+  title: string
+  risk_dim: string
+  reason: string
+  suggested_files: string[]
+  clause_indices: number[]
 }
 
 export interface ReviewJob {
@@ -100,6 +133,10 @@ export interface ReviewJob {
   chunk_count: number
   error: string
   created_at: string
+  review_scope?: ReviewScope
+  supplement_file_ids?: number[]
+  chosen_supplement_file_ids?: number[]
+  material_decision?: 'deferred' | 'supplemented' | null
 }
 
 export interface ReviewHistoryItem {
@@ -127,7 +164,7 @@ export interface ReviewHistoryDetail extends Omit<ReviewJob, 'status'> {
 }
 
 export type ReviewEvent =
-  | { event: 'meta'; data: { task_id: number; session_id: number; chunk_count: number } }
+  | { event: 'meta'; data: { task_id: number; session_id: number; chunk_count: number; review_scope?: ReviewScope } }
   | { event: 'message'; data: RiskPoint }
   | { event: 'end'; data: ReviewSummary }
   | { event: 'error'; data: { message: string } }

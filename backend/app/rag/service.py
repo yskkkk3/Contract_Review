@@ -4,6 +4,7 @@ from pathlib import Path
 
 from qdrant_client import AsyncQdrantClient
 
+from app.agent.review_profiles import contextual_query
 from app.core.config import get_settings
 from app.core.langfuse import traced
 from app.core.qdrant import create_qdrant_client
@@ -93,6 +94,10 @@ class RAGService:
         导致文档级 Recall 被低估。
         """
         queries = await expand_query(query)
+        # Add a typed retrieval direction without dropping the original/general query.
+        # Do not pass this expansion to legal_supplement: topic hints are not facts.
+        typed_query = contextual_query(query, risk_dim)
+        queries = list(dict.fromkeys([query, *queries, typed_query]))
         # 每个查询只向量化一次，三库复用；不能把同一个查询重复计费三次。
         query_vectors = await get_sf_client().embed(queries)
         if len(query_vectors) != len(queries):

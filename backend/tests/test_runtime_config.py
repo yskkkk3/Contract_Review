@@ -315,4 +315,6 @@ def test_review_api_keeps_configuration_and_contract_scope_in_stream(client, adm
     monkeypatch.setattr(review_service, "get_rag_service", object)
     response = client.post("/api/reviews/start", headers=admin_headers, json={"session_id": sid, "stance": "甲方"})
     assert '"event": "end"' in response.text
-    assert seen == [("configured-review", "scoped specialist 付款")]
+    assert len(seen) == 1 and seen[0][0] == "configured-review"
+    assert seen[0][1].startswith("scoped specialist 付款\n")
+    assert "本次审阅配置" in seen[0][1]

@@ -1,12 +1,18 @@
 """Prompt loader: read .md templates with {var} interpolation."""
+import json
 import re
 from pathlib import Path
 
+from app.agent.review_profiles import COMMON, active_profile
 from app.core.runtime_config import prompt_override
 
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 
 _cache: dict[str, str] = {}
+_PROFILE_AWARE = {
+    "router", "specialist_base", "gate", "gate_repair", "arbitration",
+    "review_completeness", "rag_evidence_rerank",
+}
 
 
 def load_prompt(name: str, *, contract_type_id: int | None = None, **kwargs) -> str:
@@ -17,6 +23,18 @@ def load_prompt(name: str, *, contract_type_id: int | None = None, **kwargs) -> 
     text = override if override is not None else _cache[str(path)]
     for key, value in kwargs.items():
         text = text.replace("{" + key + "}", str(value))
+    profile = active_profile()
+    if profile is not None and name in _PROFILE_AWARE:
+        checks = COMMON.checks + (profile.checks if profile is not COMMON else ())
+        selected = [check for check in checks if not kwargs.get("risk_dim") or check.risk_dim == kwargs["risk_dim"]]
+        text += "\n\n" + load_prompt(
+            "review_scope", profile_name=profile.name,
+            checklist=json.dumps([{"id": item.id, "title": item.title, "risk_dim": item.risk_dim}
+                                  for item in selected], ensure_ascii=False),
+        )
+        specialized = f"contract_profiles/{profile.key}"
+        if (PROMPTS_DIR / f"{specialized}.md").exists():
+            text += "\n\n" + load_prompt(specialized)
     return text
 
 

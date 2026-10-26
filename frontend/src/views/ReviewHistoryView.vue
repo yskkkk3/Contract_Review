@@ -69,7 +69,10 @@
           <el-button @click="openDetail(detail.id)">刷新详情</el-button>
           <el-button v-if="!detail.id.startsWith('legacy-') && ['processing', 'cancelling'].includes(detail.status)" type="danger" plain :loading="stopping" :disabled="detail.status === 'cancelling'" @click="stopDetail">停止审阅</el-button>
           <el-button type="primary" :disabled="!detail.can_repeat" @click="repeat(detail.id)">按此配置再次审阅</el-button>
+          <el-button v-if="detail.status === 'completed'" type="primary" plain :loading="creatingChat" @click="askAboutReview(detail.id)">审阅结果答疑</el-button>
         </div>
+        <ReviewScopePanel :scope="detail.summary?.review_scope || detail.review_scope" />
+        <MissingMaterialsPanel :materials="detail.summary?.review_scope?.missing_materials || []" />
         <el-alert v-if="detail.status !== 'completed'" title="本次审阅尚未形成完整结论，以下仅为已产生的初步意见。" type="warning" :closable="false" class="history-notice" />
         <el-alert v-if="detail.error || detail.notice" :title="detail.error || detail.notice" type="info" :closable="false" class="history-notice" />
         <template v-if="detail.summary">
@@ -92,9 +95,12 @@
 <script setup lang="ts">
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { reviewApi } from '@/api/review'
 import { useAuthStore } from '@/stores/auth'
 import { useReviewStore } from '@/stores/review'
+import ReviewScopePanel from '@/components/review/ReviewScopePanel.vue'
+import MissingMaterialsPanel from '@/components/review/MissingMaterialsPanel.vue'
 import { formatReviewTime, reviewRiskLabel, reviewStatusLabel, reviewStatusType } from '@/utils/review-history'
 import type { ReviewHistoryDetail, ReviewHistoryItem } from '@/types/api'
 
@@ -119,6 +125,7 @@ const detailOpen = ref(false)
 const detailLoading = ref(false)
 const detailError = ref('')
 const stopping = ref(false)
+const creatingChat = ref(false)
 let listSequence = 0
 let detailSequence = 0
 let disposed = false
@@ -170,6 +177,19 @@ async function openDetail(id: string) {
 
 function closeDetail() { ++detailSequence; detail.value = null; detailLoading.value = false }
 function repeat(id: string) { void router.push({ name: 'review', query: { repeat: id } }) }
+
+async function askAboutReview(id: string) {
+  if (creatingChat.value) return
+  creatingChat.value = true
+  try {
+    const session = await reviewApi.createChat(id)
+    await router.push({ name: 'chat', query: { session_id: String(session.session_id) } })
+  } catch {
+    ElMessage.error('创建审阅答疑会话失败，请重试')
+  } finally {
+    creatingChat.value = false
+  }
+}
 
 async function stopDetail() {
   const id = detail.value?.id

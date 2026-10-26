@@ -20,6 +20,7 @@ export const useReviewStore = defineStore('review', {
     stance: '甲方' as '甲方' | '乙方',
     intensity: '标准' as '严格' | '标准' | '宽松',
     description: '',
+    supplementFileIds: [] as number[],
     submitting: false,
     cancelRequested: false,
     stopping: false,
@@ -72,8 +73,10 @@ export const useReviewStore = defineStore('review', {
       this.stance = job.stance
       this.intensity = job.intensity
       this.description = job.description
+      this.supplementFileIds = [...(job.supplement_file_ids || [])]
     },
-    prepareFromHistory(data: Pick<ReviewJob, 'file_id' | 'contract_type' | 'stance' | 'intensity' | 'description'>) {
+    prepareFromHistory(data: Pick<ReviewJob, 'file_id' | 'contract_type' | 'stance' | 'intensity' | 'description'> &
+      { supplement_file_ids?: number[] }) {
       if (this.submitting) throw new Error('正在发起审阅，请稍后重试')
       this.editingDraft = true
       this.selectedId = ''
@@ -82,6 +85,7 @@ export const useReviewStore = defineStore('review', {
       this.stance = data.stance
       this.intensity = data.intensity
       this.description = data.description
+      this.supplementFileIds = [...(data.supplement_file_ids || [])]
     },
     async start(files: ContractFile[], types: ContractType[]) {
       if (this.submitting || this.ownerId === null || !this.fileId) return
@@ -93,7 +97,8 @@ export const useReviewStore = defineStore('review', {
       const generation = this.generation
       const fileId = this.fileId
       const options = { stance: this.stance, intensity: this.intensity,
-        description: this.description, contract_type: this.contractType }
+        description: this.description, contract_type: this.contractType,
+        supplement_file_ids: [...this.supplementFileIds] }
       let sessionId: number | undefined
       try {
         const selectedType = types.find((type) => type.name === options.contract_type)
@@ -156,6 +161,15 @@ export const useReviewStore = defineStore('review', {
       const accepted = current.is_accepted ? 0 : 1
       await api.acceptRiskPoint(point.task_id, point.session_id, point.index, Boolean(accepted))
       current.is_accepted = accepted
+    },
+    async recordMaterialDecision(
+      id: string,
+      decision: 'deferred' | 'supplemented',
+      supplementFileIds: number[] = [],
+    ) {
+      const updated = await reviewApi.materialDecision(id, decision, supplementFileIds)
+      this.jobs = this.jobs.map((item) => item.id === id ? updated : item)
+      return updated
     },
   },
 })

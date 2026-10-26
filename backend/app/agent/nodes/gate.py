@@ -3,8 +3,10 @@
 简历点：LLM 质检 + 规则校验双层；不合格结果触发一次纠错重试。
 """
 import json
+import re
 
 from app.agent.prompts import load_prompt
+from app.agent.review_profiles import profiled
 from app.agent.rules.legal_guards import (
     guarded_legal_coverage_complete,
     legal_conclusion_errors,
@@ -12,7 +14,7 @@ from app.agent.rules.legal_guards import (
 )
 from app.agent.state import ReviewState
 from app.core.config import get_settings
-from app.rag.client import get_sf_client
+from app.rag.client import LLMOutputTruncated, get_sf_client, is_provider_unavailable_error
 
 settings = get_settings()
 
@@ -22,7 +24,10 @@ GATE_SCHEMA: dict = {
     "type": "object",
     "properties": {
         "decision": {"type": "string", "enum": ["accept", "drop", "revise"]},
-        "issues": {"type": "array", "items": {"type": "string"}},
+        "issues": {
+            "type": "array", "maxItems": 4,
+            "items": {"type": "string", "maxLength": 200},
+        },
     },
     "required": ["decision", "issues"],
     "additionalProperties": False,
@@ -44,6 +49,40 @@ def _rule_check(point: dict, chunk: str | None = None) -> list[str]:
     return errors
 
 
+def _canonical_source(
+    original: str,
+    chunks: list[str],
+    preferred_index: int,
+) -> tuple[int, str]:
+    """Map whitespace-normalized/tool-read quotations back to exact contract text."""
+    if not original:
+        return preferred_index, original
+    order = [preferred_index, *(index for index in range(len(chunks)) if index != preferred_index)]
+    for index in order:
+        chunk = chunks[index]
+        if original in chunk:
+            return index, original
+
+    candidates = [original]
+    without_item_number = re.sub(r"^\s*\d+\s*[.．、]\s*", "", original, count=1)
+    if without_item_number != original:
+        candidates.append(without_item_number)
+    for candidate in candidates:
+        compact_original = "".join(char for char in candidate if not char.isspace())
+        if not compact_original:
+            continue
+        for index in order:
+            chunk = chunks[index]
+            positions = [position for position, char in enumerate(chunk) if not char.isspace()]
+            compact_chunk = "".join(chunk[position] for position in positions)
+            start = compact_chunk.find(compact_original)
+            if start >= 0:
+                first = positions[start]
+                last = positions[start + len(compact_original) - 1] + 1
+                return index, chunk[first:last]
+    return preferred_index, original
+
+
 async def _llm_check(
     point: dict,
     chunk: str,
@@ -63,7 +102,7 @@ async def _llm_check(
             model_type="review", json_schema=GATE_SCHEMA,
             model=settings.llm_review_model,
             temperature=0,
-            max_tokens=256,
+            max_tokens=1024,
         )
         if isinstance(data, dict) and data.get("decision") in {"accept", "drop", "revise"}:
             issues = data.get("issues", [])
@@ -73,7 +112,9 @@ async def _llm_check(
         if isinstance(data, dict) and isinstance(data.get("valid"), bool):
             return data["valid"]
         return False
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        if is_provider_unavailable_error(exc) or isinstance(exc, LLMOutputTruncated):
+            raise
         return False
 
 
@@ -112,20 +153,43 @@ async def _retry_fix(point: dict, chunk: str, risk_dim: str, evidence_context: s
         if fixed.get("original_content") and fixed.get("risk_level") in VALID_LEVELS:
             return fixed
         return None
-    except Exception:
+    except Exception as exc:
+        if is_provider_unavailable_error(exc) or isinstance(exc, LLMOutputTruncated):
+            raise
         return None
 
 
+@profiled()
 async def gate_node(state: ReviewState) -> dict:
     gated: list[dict] = []
     errors = list(state.get("errors", []))
+    generation_failure: Exception | None = None
+
+    async def paid_check(operation, *args):
+        nonlocal generation_failure
+        try:
+            return await operation(*args)
+        except Exception as exc:
+            if not (is_provider_unavailable_error(exc) or isinstance(exc, LLMOutputTruncated)):
+                raise
+            generation_failure = exc
+            return None
+
     for output in state["specialist_outputs"]:
         accepted_for_output: list[dict] = []
         unresolved_structure_failure = False
         unresolved_legal_failure = False
         gate_unavailable = False
         for point in output.get("result", []):
-            chunk = state["chunks"][output["chunk_index"]]
+            if generation_failure is not None:
+                gate_unavailable = True
+                break
+            point = dict(point)
+            point_chunk_index, canonical = _canonical_source(
+                point.get("original_content", ""), state["chunks"], output["chunk_index"],
+            )
+            point["original_content"] = canonical
+            chunk = state["chunks"][point_chunk_index]
             evidence_context = output.get("evidence_context", "")
             structure_errors = _rule_check(point, chunk)
             legal_errors = legal_conclusion_errors(point, chunk, evidence_context)
@@ -134,25 +198,34 @@ async def gate_node(state: ReviewState) -> dict:
                 decision, assessment_issues = "revise", []
             else:
                 decision, assessment_issues = _normalize_assessment(
-                    await _llm_check(point, chunk, evidence_context, accepted_for_output)
+                    await paid_check(_llm_check, point, chunk, evidence_context, accepted_for_output)
                 )
+            if generation_failure is not None:
+                gate_unavailable = True
+                break
             if decision == "drop" and not point_errors:
                 # A sound clause or a purely optional improvement is not a reportable risk.
                 continue
             if point_errors or decision != "accept":
                 # 纠错重试一次
                 issues = point_errors + assessment_issues
-                fixed = await _retry_fix(point, chunk, output["risk_dim"], evidence_context, issues)
+                fixed = await paid_check(_retry_fix, point, chunk, output["risk_dim"], evidence_context, issues)
+                if generation_failure is not None:
+                    gate_unavailable = True
+                    break
                 fixed_errors = (
                     _rule_check(fixed, chunk) + legal_conclusion_errors(fixed, chunk, evidence_context)
                     if fixed else ["修复未返回有效风险点"]
                 )
                 fixed_decision, _ = (
                     _normalize_assessment(
-                        await _llm_check(fixed, chunk, evidence_context, accepted_for_output)
+                        await paid_check(_llm_check, fixed, chunk, evidence_context, accepted_for_output)
                     )
                     if fixed and not fixed_errors else ("revise", [])
                 )
+                if generation_failure is not None:
+                    gate_unavailable = True
+                    break
                 if fixed and not fixed_errors and fixed_decision == "accept":
                     # 修复阶段没有重新检索，不能凭空增加未经专家阶段核验的引用。
                     refs = fixed.get("evidence_refs", [])
@@ -175,7 +248,7 @@ async def gate_node(state: ReviewState) -> dict:
                         gate_unavailable = True
                     continue
             point["risk_dim"] = output["risk_dim"]
-            point["chunk_index"] = output["chunk_index"]
+            point["chunk_index"] = point_chunk_index
             gated.append(point)
             accepted_for_output.append(point)
             # 只流式展示已核验结果，避免已被质检剔除的法律结论仍留在前端。
@@ -207,4 +280,7 @@ async def gate_node(state: ReviewState) -> dict:
                 or ((gate_unavailable or unresolved_legal_failure)
                     and not critical_coverage_complete)):
             errors.append(f"条款{output['chunk_index']}部分意见未通过证据与事实核验")
+    if generation_failure is not None:
+        reason = "质检模型输出被截断" if isinstance(generation_failure, LLMOutputTruncated) else "质检模型暂不可用"
+        errors.append(f"{reason}，已停止后续模型修复；当前审阅未完成（{type(generation_failure).__name__}）")
     return {"gated": gated, "errors": errors}

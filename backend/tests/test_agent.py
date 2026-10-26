@@ -1,12 +1,44 @@
 """Agent pure-logic tests: clause split, rule fallback, routing, gate, arbitration."""
 
 from app.agent.nodes.arbitration import _arbitrate_rules, _overall_risk
-from app.agent.nodes.gate import _rule_check
+from app.agent.nodes.gate import _canonical_source, _rule_check
 from app.agent.nodes.intent import _rule_classify
 from app.agent.nodes.router import _rule_route
 from app.agent.prompts import load_prompt, load_risk_dim_prompt
 from app.agent.state import RISK_DIMS
 from app.services.review_service import split_contract_clauses
+
+
+async def test_gate_service_failure_does_not_trigger_paid_repairs_but_keeps_rule_checks(monkeypatch):
+    from app.agent.nodes import gate
+
+    class ProviderError(Exception):
+        status_code = 502
+
+    calls, rule_chunks = [], []
+
+    async def unavailable(*_args):
+        calls.append("check")
+        raise ProviderError()
+
+    async def repair(*_args):
+        raise AssertionError("Service failure must not trigger a paid content repair")
+
+    def required(chunk, *_args):
+        rule_chunks.append(chunk)
+        return []
+
+    monkeypatch.setattr(gate, "_llm_check", unavailable)
+    monkeypatch.setattr(gate, "_retry_fix", repair)
+    monkeypatch.setattr(gate, "required_legal_findings", required)
+    point = {"original_content": "合同条款", "risk_analysis": "条款分析", "risk_level": "中", "suggested_content": "具体建议"}
+    result = await gate.gate_node({"chunks": ["合同条款0", "合同条款1"], "specialist_outputs": [
+        {"chunk_index": i, "risk_dim": "验收交付与质保", "result": [dict(point)]} for i in range(2)
+    ]})
+    assert calls == ["check"]
+    assert rule_chunks == ["合同条款0", "合同条款1"]
+    assert result["gated"] == []
+    assert any("质检模型暂不可用" in error for error in result["errors"])
 
 
 def test_split_clauses_by_section():
@@ -54,6 +86,35 @@ def test_gate_rejects_rewritten_or_spliced_original():
              "risk_level": "中", "suggested_content": "明确付款期限"}
     assert _rule_check(point, "交付后30日付款，另附结算材料。") == []
     assert _rule_check(point, "货物交付后办理验收，验收后30日付款。")
+
+
+def test_gate_maps_whitespace_normalized_quote_to_exact_contract_text():
+    chunks = ["第五条 权利\n源代码、模型及项目文档\n全部归甲方。"]
+    index, original = _canonical_source("源代码、模型及项目文档全部归甲方。", chunks, 0)
+
+    assert index == 0
+    assert original == "源代码、模型及项目文档\n全部归甲方。"
+    assert _rule_check({
+        "original_content": original,
+        "risk_analysis": "权属范围可能影响复用",
+        "risk_level": "中",
+        "suggested_content": "明确既有成果边界",
+    }, chunks[index]) == []
+
+
+def test_gate_maps_tool_read_quote_to_its_actual_clause():
+    chunks = ["第二条 交付", "第五条 权利\n全部知识产权归甲方。"]
+
+    assert _canonical_source("全部知识产权归甲方。", chunks, 0) == (1, "全部知识产权归甲方。")
+
+
+def test_gate_recovers_exact_text_after_model_changes_only_item_number_punctuation():
+    chunks = ["3.按合同约定及时组织验收、按期支付合同款项；"]
+
+    assert _canonical_source("3、按合同约定及时组织验收、按期支付合同款项；", chunks, 0) == (
+        0,
+        "按合同约定及时组织验收、按期支付合同款项；",
+    )
 
 
 async def test_gate_repair_cannot_add_unretrieved_citations(monkeypatch):
