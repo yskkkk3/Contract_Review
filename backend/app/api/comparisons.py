@@ -1,16 +1,19 @@
-"""Contract comparison routes (docx only, synchronous)."""
+"""Compare DOCX blocks and the stored text of parsed PDF/DOC contracts."""
 import json
 from difflib import SequenceMatcher
+from zipfile import BadZipFile
 
 from docx import Document
+from docx.opc.exceptions import PackageNotFoundError
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 from fastapi import APIRouter, Depends, HTTPException
+from lxml.etree import XMLSyntaxError
 from sqlalchemy.orm import Session as DBSession
 
 from app.core.db import get_db
 from app.core.security import get_current_user
-from app.core.storage import get_storage
+from app.core.storage import Storage, get_storage
 from app.models.comparison import ComparisonTask
 from app.models.contract import ContractFile
 from app.models.session_message import Session, SessionTypeEnum
@@ -64,9 +67,38 @@ def _char_diff(a: str, b: str) -> list[CharDiff]:
     return out
 
 
+def _comparison_paragraphs(contract: ContractFile, storage: Storage) -> list[str]:
+    kind = contract.file_type.strip().lower().lstrip(".")
+    if kind not in {"docx", "pdf", "doc"}:
+        raise HTTPException(400, "支持 DOCX 及已解析的 PDF、DOC 合同比对")
+    if kind == "docx":
+        if not storage.exists(contract.file_path):
+            raise HTTPException(404, f"合同“{contract.title}”的文件不存在，请重新上传")
+        try:
+            with storage.materialize(contract.file_path, suffix=".docx") as path:
+                paragraphs = _docx_paragraphs(path)
+        except (BadZipFile, PackageNotFoundError, XMLSyntaxError, ValueError) as exc:
+            raise HTTPException(422, f"合同“{contract.title}”无法读取，请检查 DOCX 文件后重新上传") from exc
+    else:
+        if contract.parse_status != "parsed" or not contract.content_path:
+            raise HTTPException(422, f"合同“{contract.title}”尚未解析，请先到合同管理上传并解析")
+        if not storage.exists(contract.content_path):
+            raise HTTPException(404, f"合同“{contract.title}”的解析正文不存在，请重新上传解析")
+        try:
+            content = storage.read_text(contract.content_path)
+        except UnicodeError as exc:
+            raise HTTPException(422, f"合同“{contract.title}”的正文无法读取，请重新上传解析") from exc
+        paragraphs = [line.strip() for line in content.splitlines() if line.strip()]
+    if not paragraphs:
+        raise HTTPException(422, f"合同“{contract.title}”没有可比对的正文，请重新上传解析")
+    return paragraphs
+
+
 def _diff_docs(std_path: str, cmp_path: str) -> tuple[DiffSummary, list[ParagraphDiff]]:
-    std = _docx_paragraphs(std_path)
-    cmp = _docx_paragraphs(cmp_path)
+    return _diff_paragraphs(_docx_paragraphs(std_path), _docx_paragraphs(cmp_path))
+
+
+def _diff_paragraphs(std: list[str], cmp: list[str]) -> tuple[DiffSummary, list[ParagraphDiff]]:
     sm = SequenceMatcher(None, std, cmp)
     diffs: list[ParagraphDiff] = []
     diff_count = 0
@@ -120,15 +152,16 @@ async def start_comparison(
     cmp = db.get(ContractFile, request.comparison_file_id)
     if std is None or cmp is None or std.user_id != current_user.id or cmp.user_id != current_user.id:
         raise HTTPException(404, "File not found")
-    if std.file_type != "docx" or cmp.file_type != "docx":
-        raise HTTPException(400, "Only docx files supported")
-
+    session = None
     if request.session_id:
         session = db.get(Session, request.session_id)
         if session is None or session.user_id != current_user.id or session.session_type != SessionTypeEnum.COMPARE:
             raise HTTPException(404, "Session not found")
-        session_id = session.id
-    else:
+    storage = get_storage()
+    summary, diffs = _diff_paragraphs(
+        _comparison_paragraphs(std, storage), _comparison_paragraphs(cmp, storage),
+    )
+    if session is None:
         session = Session(
             user_id=current_user.id,
             title=request.title or f"{std.title} VS {cmp.title}",
@@ -136,16 +169,8 @@ async def start_comparison(
             file_id=std.id,
         )
         db.add(session)
-        db.commit()
-        db.refresh(session)
-        session_id = session.id
-
-    storage = get_storage()
-    with (
-        storage.materialize(std.file_path, suffix=".docx") as std_path,
-        storage.materialize(cmp.file_path, suffix=".docx") as cmp_path,
-    ):
-        summary, diffs = _diff_docs(std_path, cmp_path)
+        db.flush()
+    session_id = session.id
     task = db.query(ComparisonTask).filter(ComparisonTask.session_id == session_id).first()
     if task is None:
         task = ComparisonTask(
